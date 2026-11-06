@@ -110,9 +110,10 @@ export function writeDoc(path: string, meta: Record<string, string | undefined>,
 export const list = (dir: string, re = /\.md$/) =>
   existsSync(dir) ? readdirSync(dir).filter((f) => re.test(f)).sort().map((f) => join(dir, f)) : [];
 
-/** "…/decisions/open/D-0001.md" → "D-0001". Always use this (not split("/")): on Windows list() returns
- *  backslash paths, so splitting on "/" yields the whole path — that silently broke every chat reply to a card. */
-export const fileId = (path: string) => basename(path, ".md");
+/** "…/decisions/open/D-0001.md" → "D-0001". Accept both separators on every OS: `basename` from node:path
+ *  only treats "\" as a separator on Windows, so a Windows path passed to it on Linux/macOS (CI, tests) came
+ *  back whole — and a CI job has to be able to assert the Windows behaviour it cannot run. */
+export const fileId = (path: string) => basename(path.replace(/\\/g, "/"), ".md");
 
 /** Non-primary hosts mint IDs with a host letter (T-M0001) so two machines never create the same ID. */
 let idTag = "";
