@@ -106,6 +106,9 @@ extra = []                            # more Claude Code tool patterns to hard-b
 # ------------------------------------------------------------------ routines (signal → task generators)
 # every: "15m" | "hourly" | "daily HH:MM" | "weekdays HH:MM" | "weekly MON HH:MM"
 # requires = hard capability (task waits for such a host) ; prefer = soft (falls back to anyone)
+# needs = data sources the routine cannot work without: a [sources] key, "env:NAME" or "file:PATH".
+#         While a needed source is missing, or no online host has the routine's `requires`, the routine
+#         creates no task and writes no journal — it simply stays quiet until it can actually do the work.
 
 [[routine]]
 name = "triage-inbound"
@@ -199,6 +202,16 @@ every = "weekly SUN 21:00"
 agent = "architect"
 weight = "heavy"
 prompt = "Deep weekly evolution: 30-day window. Re-read every agent profile and policy end to end; rewrite for clarity and remove obsolete rules (Tier 2 for removals). Propose new agents for recurring uncovered work and any framework PR."
+
+# ------------------------------------------------------------------ data sources (routines: needs = "<key>")
+# Any non-empty value marks the source as configured and lets the routines that need it run. An empty
+# or absent key means "not configured yet": those routines stay silent instead of running a pointless
+# round and journaling "no data source". Examples:
+#   [[routine]] uptime-watch → needs = "uptime"            # satisfied by  [sources] uptime = "https://..."
+#   [[routine]] triage       → needs = "env:GITHUB_TOKEN"  # satisfied by a non-empty environment variable
+#   [[routine]] feed-watch   → needs = "file:~/.cache/feed.json"
+# [sources]
+# uptime = "https://uptime.example.com/api"
 
 [email]                               # Used for: owner login codes on the cloud client (`to` = who may log in,
                                       # comma-separated) and the token-changed notice. `hub cloud deploy` copies this

@@ -28,6 +28,7 @@ import { runTool } from "../cloud/src/tools";
 import { cloudDeploy, startCloudBridge } from "./cloud";
 import { adoptCloudUrl, readHubToml } from "./sync";
 import { judgeAccuracy, level, needsApproval, proposeBatch, resolveProposals, routineQueued, supersedeProposed } from "./autonomy";
+import { routineReady } from "./routines";
 import { CODE, UPDATE_REQUEST, type UpdateState, setUpdateState, updateState, allowedClis, capOk, idTagFor, isPrimary, runningRev, setApprovalGate, setIdTag } from "./core";
 import { accountEnv, accountsStatus, classify, failoverAccount, pendingLoginIds, pickAccount, reportFailure, retryLogins, submitLoginCode } from "./accounts";
 
@@ -64,14 +65,19 @@ export function signalChanged(r: { name: string; signal?: string }, state: Recor
   return true;
 }
 
-function runRoutines(cfg: Cfg, host: string, primary: boolean) {
+export function runRoutines(cfg: Cfg, host: string, primary: boolean) {
   const state: Record<string, string> = existsSync(STATE) ? JSON.parse(readFileSync(STATE, "utf8")) : {};
   maybeProposeNext(cfg, host, state);
+  // Gate on online hosts; this machine's own heartbeat may not be on disk yet, so include our own caps.
+  const hosts = [...onlineHosts(cfg).map((h) => ({ host: h.host, caps: h.caps })), { host, caps: hostCaps(cfg) }];
   for (const r of cfg.routine ?? []) {
     if (r.enabled === false) continue;
     const owner = r.scheduler ?? (r.kind === "learn" ? "each" : "primary"); // which host generates the task
     if (owner === "primary" ? !primary : owner !== "each" && owner !== host) continue;
     if (!due(r.every, state[r.name])) continue;
+    // Missing data source or no online host with `requires` → stay quiet: no task, no journal line,
+    // and the due timer does not advance, so the routine runs on the first tick after the gate opens.
+    if (!routineReady(cfg, r, hosts).ok) continue;
     if (r.kind === "learn") { // local session history → digest → task pinned to this host
       state[r.name] = new Date().toISOString();
       const d = collect(cfg);
