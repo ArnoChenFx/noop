@@ -3,7 +3,7 @@ import { $ } from "bun";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
-import { CODE, DATA, P } from "./core";
+import { CODE, DATA, HOME_DIR, P } from "./core";
 
 const STATE_DIRS = [
   "tasks/proposed", "tasks/rejected", "tasks/waiting", "tasks/inbox", "tasks/active", "tasks/blocked", "tasks/failed", "tasks/done",
@@ -93,6 +93,42 @@ function writeLocalConfig(me: string) {
 }
 
 // ------------------------------------------------------------------ self-update
+/** One self-update attempt that rolled back, keyed by "<from>→<to>"; machine-local. */
+export type UpdateFailure = { at: string; tests: string[] };
+const FAILURES = () => join(HOME_DIR, "update-failures.json");
+const ANSI = /\x1b\[[0-9;]*m/g;
+
+/** Names of the tests bun reported as failed, without ANSI colours or timings (first `max`, de-duplicated). */
+export function failingTests(out: string, max = 5): string[] {
+  const names: string[] = [];
+  for (const line of out.replace(ANSI, "").split("\n")) {
+    const m = line.match(/^\s*\(fail\)\s+(.+?)(?:\s+\[[\d.]+\s*m?s\])?\s*$/);
+    const name = m?.[1]?.trim();
+    if (name && !names.includes(name)) names.push(name);
+  }
+  return names.slice(0, max);
+}
+
+/** Run the AI medic at most once a day for the same rolling-back pair: a repeated identical failure is an
+ *  environment problem (PATH, toolchain), and an hourly AI run only produces another rollback. */
+export function shouldCallMedic(failures: Record<string, UpdateFailure>, pair: string, now = Date.now(), hours = 24): boolean {
+  const f = failures[pair];
+  return !f || now - Date.parse(f.at) >= hours * 3_600_000;
+}
+
+export function readUpdateFailures(): Record<string, UpdateFailure> {
+  try { return JSON.parse(readFileSync(FAILURES(), "utf8")); } catch { return {}; }
+}
+
+/** Remember a rolling-back pair; entries older than 30 days are dropped. */
+function rememberFailure(pair: string, tests: string[], now = Date.now()) {
+  const all = readUpdateFailures();
+  all[pair] = { at: new Date(now).toISOString(), tests };
+  for (const [k, v] of Object.entries(all)) if (now - Date.parse(v.at) > 30 * 86_400_000) delete all[k];
+  try { mkdirSync(HOME_DIR, { recursive: true }); writeFileSync(FAILURES(), JSON.stringify(all, null, 2)); } catch {}
+  return all;
+}
+
 /** Fast-forward framework code if origin has new commits that pass tests. Returns true if updated. */
 export async function selfUpdate(opts: { busy?: number; force?: boolean; deploy?: boolean } = {}): Promise<boolean> {
   // never swap code (and then restart) under running work: defer until this host is idle
@@ -116,13 +152,33 @@ export async function selfUpdate(opts: { busy?: number; force?: boolean; deploy?
   if (deps.exitCode !== 0 || test.exitCode !== 0) {
     await g("reset", "--hard", "-q", head); // roll back a bad release
     await $`bun install --frozen-lockfile`.cwd(CODE).quiet().nothrow();
+    const pair = `${head.slice(0, 7)}→${up.slice(0, 7)}`;
+    const failed = failingTests(test.stdout.toString() + test.stderr.toString());
     console.error(`self-update to ${up.slice(0, 7)} failed tests → rolled back to ${head.slice(0, 7)}`);
-    const { medic } = await import("./medic");
-    const { loadConfig } = await import("./core");
-    void medic(`self-update ${head.slice(0, 7)} → ${up.slice(0, 7)} failed (deps exit ${deps.exitCode}, tests exit ${test.exitCode}); rolled back.\n${test.stdout.toString().slice(-3000)}${test.stderr.toString().slice(-3000)}`,
-      loadConfig(), { auto: true, kind: "update" });
+    // Make the rollback visible where people look: the journal, the version card, and at most one medic per day.
+    // Nine identical rolling-backs in one day used to produce nine AI runs and no trace outside a console log.
+    const callMedic = shouldCallMedic(readUpdateFailures(), pair);
+    const failures = rememberFailure(pair, failed);
+    try {
+      const { journal, hostName, loadConfig, setUpdateState } = await import("./core");
+      journal(hostName(loadConfig()), `⚠️ self-update ${pair} failed${failed.length ? `: ${failed.join(", ")}` : ""}; rolled back`);
+      setUpdateState({ at: new Date().toISOString(), state: "failed", from: head,
+        detail: `${pair} 测试未通过，已回滚${failed.length ? `：${failed.slice(0, 3).join(", ")}` : ""}` });
+    } catch {}
+    if (callMedic) {
+      const { medic } = await import("./medic");
+      const { loadConfig } = await import("./core");
+      void medic(`self-update ${pair} failed (deps exit ${deps.exitCode}, tests exit ${test.exitCode}); rolled back.${failed.length ? `\nFailing tests: ${failed.join(", ")}` : ""}\n${test.stdout.toString().slice(-3000)}${test.stderr.toString().slice(-3000)}`,
+        loadConfig(), { auto: true, kind: "update" });
+    } else {
+      console.error(`self-update ${pair} already failed within 24h; skipping the medic (${Object.keys(failures).length} pair(s) recorded)`);
+    }
     return false;
   }
+  try { // a later success clears the "failed" badge left by an earlier rollback
+    const { setUpdateState } = await import("./core");
+    setUpdateState({ at: new Date().toISOString(), state: "current", detail: `已自更新到 ${up.slice(0, 7)}`, from: head });
+  } catch {}
   seedTemplates(); // new template agents/policies appear; existing ones untouched
   { // primary keeps its own Cloudflare hub in step with the code (Worker or app changed)
     const { loadConfig, hostName } = await import("./core");
