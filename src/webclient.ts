@@ -3,6 +3,7 @@
 import { $ } from "bun";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
+import { tarPath } from "./shell";
 
 const ASSET = "noop-web.tar.gz";
 const WEB_DIR = join(import.meta.dir, "..", "app", "dist", "web");
@@ -37,7 +38,7 @@ export async function ensureWebClient(dir = WEB_DIR, base = process.env.NOOP_CLI
     mkdirSync(out, { recursive: true });
     writeFileSync(join(work, ASSET), new Uint8Array(bytes));
     // Run inside work with relative names: tar on Windows reads an absolute "C:\..." path as a remote host.
-    const tar = await $`tar -xzf ${ASSET} -C noop`.cwd(work).quiet().nothrow();
+    const tar = await $`${tarPath()} -xzf ${ASSET} -C noop`.cwd(work).quiet().nothrow();
     if (tar.exitCode !== 0 || !existsSync(join(out, "index.html"))) throw new Error(`${ASSET}: not a web client`);
     rmSync(client, { recursive: true, force: true });
     renameSync(out, client);

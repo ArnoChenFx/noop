@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "os";
 import { join } from "path";
 import { ensureWebClient } from "../src/webclient";
+import { tarPath } from "../src/shell";
 
 describe("ensureWebClient", () => {
   let root: string, dir: string, assets: Record<string, Uint8Array | string>, requests: string[];
@@ -19,7 +20,7 @@ describe("ensureWebClient", () => {
     const name = `${text}.tar.gz`;
     const tarball = join(root, name);
     // Run from root with relative names: tar on Windows reads an absolute "C:\..." path as a remote host.
-    await $`tar -czf ${name} -C ${`src-${text}`} .`.cwd(root).quiet();
+    await $`${tarPath()} -czf ${name} -C ${`src-${text}`} .`.cwd(root).quiet();
     const bytes = new Uint8Array(await Bun.file(tarball).arrayBuffer());
     assets["noop-web.tar.gz"] = bytes;
     assets.sha256sums = `${sum ?? new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}  noop-web.tar.gz\n`;
@@ -96,7 +97,7 @@ describe("ensureWebClient", () => {
     mkdirSync(empty);
     writeFileSync(join(empty, "other.txt"), "x");
     const tarball = join(root, "empty.tar.gz");
-    await $`tar -czf empty.tar.gz -C empty .`.cwd(root).quiet();
+    await $`${tarPath()} -czf empty.tar.gz -C empty .`.cwd(root).quiet();
     const bytes = new Uint8Array(await Bun.file(tarball).arrayBuffer());
     assets["noop-web.tar.gz"] = bytes;
     assets.sha256sums = `${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}  noop-web.tar.gz\n`;

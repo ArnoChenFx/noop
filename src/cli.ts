@@ -28,6 +28,7 @@ import { followUpTarget, reopenTask, type BrainOut, ClaudeModel, SYSTEM, dataAct
 import { runTool } from "../cloud/src/tools";
 import { cloudDeploy, startCloudBridge } from "./cloud";
 import { adoptCloudUrl, readHubToml } from "./sync";
+import { bashPath } from "./shell";
 import { judgeAccuracy, level, needsApproval, proposeBatch, resolveProposals, routineQueued, supersedeProposed } from "./autonomy";
 import { CODE, UPDATE_REQUEST, type UpdateState, setUpdateState, updateState, allowedClis, capOk, idTagFor, isPrimary, runningRev, setApprovalGate, setIdTag } from "./core";
 import { accountEnv, accountsStatus, classify, failoverAccount, pendingLoginIds, pickAccount, reportFailure, retryLogins, submitLoginCode } from "./accounts";
@@ -59,7 +60,7 @@ export function due(every: string, last: string | undefined, t = new Date()): bo
 export function signalChanged(r: { name: string; signal?: string }, state: Record<string, string>): boolean {
   const key = `${r.name}#signal`;
   // Non-login: the service already carries the user's PATH, and sourcing their profile can cost seconds (conda, etc.).
-  const res = Bun.spawnSync(["bash", "-c", r.signal!], { cwd: existsSync(ROOT) ? ROOT : undefined, stdout: "pipe", stderr: "pipe", timeout: 60_000 });
+  const res = Bun.spawnSync([bashPath(), "-c", r.signal!], { cwd: existsSync(ROOT) ? ROOT : undefined, stdout: "pipe", stderr: "pipe", timeout: 60_000 });
   if (res.exitCode !== 0) return true;
   const hash = new Bun.CryptoHasher("sha1").update(res.stdout).digest("hex");
   if (state[key] === hash) return false;
@@ -508,7 +509,7 @@ export async function checkWaits(now = Date.now(), everyMs?: number): Promise<Se
   }
   await Promise.all(due.map(async ([id, cmd, path]) => {
     // Non-login: the service already carries the user's PATH, and sourcing their profile can cost seconds (conda, etc.).
-    const proc = Bun.spawn(["bash", "-c", cmd], { stdout: "ignore", stderr: "ignore", cwd: homedir() });
+    const proc = Bun.spawn([bashPath(), "-c", cmd], { stdout: "ignore", stderr: "ignore", cwd: homedir() });
     const timer = setTimeout(() => proc.kill(), 60_000);
     const code = await proc.exited;
     clearTimeout(timer);
