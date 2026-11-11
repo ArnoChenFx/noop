@@ -36,6 +36,7 @@ stale_repo_days = 7                   # target/ of repos (and, on macOS, Xcode D
 # difficulty = "hard" or weight = "heavy" always go to Claude.
 routine_agents = ["dispatcher", "ops-watcher", "reporter", "oss-triage", "reviewer", "chief-of-staff"]
 # per-agent override, e.g.  [clis.agents]  reviewer = ["codex", "claude"]
+# The list is a hard limit, quota failover included: an agent set to ["claude"] never falls back to Codex (its work waits).
 timeout_minutes = 90
 [clis.claude]
 permission_mode = "bypassPermissions" # hard gates still apply via --disallowedTools (src/gates.ts)

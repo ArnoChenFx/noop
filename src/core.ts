@@ -218,13 +218,23 @@ export function newTask(title: string, body = "", o: TaskOpts = {}): string {
 
 export const which = (bin: string) => Bun.which(bin) !== null;
 
+/** The owner's `[clis.agents]` setting for the task's agent, if there is one. */
+const agentClis = (meta: Record<string, string>, cfg: Cfg) => cfg.clis?.agents?.[meta.agent || "lead"] as string[] | undefined;
+
 /** Which CLI runs a task: the owner's per-agent config wins, else what the planner (an AI call, see planInbox) chose.
  *  Unplanned tasks may use either, Claude first. */
 export function allowedClis(meta: Record<string, string>, cfg: Cfg): string[] {
-  if (meta.cli && meta.cli !== "auto") return [meta.cli];
-  const per = cfg.clis?.agents?.[meta.agent || "lead"] as string[] | undefined;
+  const per = agentClis(meta, cfg);
   if (per) return per;
+  if (meta.cli && meta.cli !== "auto") return [meta.cli];
   return ["claude", "codex"];
+}
+
+/** Everything a task may run on when its first choice is out of quota or logged out, preferred first. The owner's
+ *  per-agent setting is a hard limit: recovery never leaves it. Without one, the task's own pick comes first and the
+ *  other CLI stays a fallback, so work does not sit waiting while some AI is available. */
+export function runnableClis(meta: Record<string, string>, cfg: Cfg): string[] {
+  return agentClis(meta, cfg) ?? [...new Set([...allowedClis(meta, cfg), "claude", "codex"])];
 }
 
 export function chooseCli(meta: Record<string, string>, cfg: Cfg): string | null {
@@ -317,13 +327,15 @@ function yieldHeavy(meta: Record<string, string>, cfg: Cfg, myLoad: number, heav
     && h.stats.loadRatio + 0.2 < myLoad && h.busy === 0);
 }
 
-export function pickTask(cfg: Cfg, myLoad = 0, heavyOk = true): string | null {
+/** `canRun` lets the caller skip a task no usable AI account can take right now (a Claude-only task while Claude is
+ *  cooling down): otherwise every tick would claim it, find nothing to run it on and put it back, a push each time. */
+export function pickTask(cfg: Cfg, myLoad = 0, heavyOk = true, canRun: (meta: Record<string, string>) => boolean = () => true): string | null {
   const caps = hostCaps(cfg);
   const rank: Record<string, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
   const cands = list(P("tasks", "inbox"), /^T-.*\.md$/)
     .map((p) => ({ p, m: readDoc(p).meta }))
     // the planner decides where a task runs first; unplanned tasks wait for it (at most plan_wait_minutes)
-    .filter(({ m }) => (m.planned || Date.now() - Date.parse(m.created ?? "") > (cfg.fleet?.plan_wait_minutes ?? 3) * 60_000) && matches(m, caps) && chooseCli(m, cfg) && !yieldToPreferred(m, caps, cfg) && !yieldHeavy(m, cfg, myLoad, heavyOk))
+    .filter(({ m }) => (m.planned || Date.now() - Date.parse(m.created ?? "") > (cfg.fleet?.plan_wait_minutes ?? 3) * 60_000) && matches(m, caps) && chooseCli(m, cfg) && canRun(m) && !yieldToPreferred(m, caps, cfg) && !yieldHeavy(m, cfg, myLoad, heavyOk))
     .sort((a, b) => (rank[a.m.priority] ?? 2) - (rank[b.m.priority] ?? 2) || a.p.localeCompare(b.p));
   return cands[0]?.p ?? null;
 }

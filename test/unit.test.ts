@@ -114,15 +114,16 @@ test("repo language → host requirements (only when the repo is on disk)", asyn
   expect(matches({ repo: "/nonexistent/repo/xyz", requires: "cli:cargo" }, mac)).toBe(false); // stored at creation
 });
 
-test("quota/auth failover: same CLI's other account, then the other CLI, else nothing", async () => {
+test("quota/auth failover: same CLI's other account, then the other allowed CLI, else nothing", async () => {
   const { failoverAccount } = await import("../src/accounts");
   const all = () => true;
   const a = { cli: "claude", name: "zz-test-a", dir: "" };
   const two = { accounts: [{ cli: "claude", name: "zz-test-a" }, { cli: "claude", name: "zz-test-b" }] } as any;
   expect(failoverAccount(two, a, ["claude"], all)?.name).toBe("zz-test-b");
   const solo = { accounts: [{ cli: "claude", name: "zz-test-a" }, { cli: "codex", name: "zz-test-c" }] } as any;
-  expect(failoverAccount(solo, a, ["claude"], all)?.cli).toBe("codex"); // claude-only (owner/hard) work still falls back
-  expect(failoverAccount(solo, a, ["claude"], (c) => c === "claude")).toBeNull(); // codex not installed → requeue
+  expect(failoverAccount(solo, a, ["claude", "codex"], all)?.cli).toBe("codex"); // both allowed: falls back
+  expect(failoverAccount(solo, a, ["claude"], all)).toBeNull(); // Claude-only stays Claude-only: requeue, never Codex
+  expect(failoverAccount(solo, a, ["claude", "codex"], (c) => c === "claude")).toBeNull(); // codex not installed → requeue
   expect(failoverAccount(solo, { cli: "codex", name: "zz-test-c", dir: "" }, ["codex", "claude"], all)?.cli).toBe("claude");
 });
 
