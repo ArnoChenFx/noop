@@ -38,6 +38,11 @@ test("result parsing", () => {
   expect(parseResult('{"status":"done","summary":"ok"}').status).toBe("done");
 });
 
+test("result parsing repairs a raw line break inside a JSON string", () => {
+  const out = '```json\n{"status":"delegated","summary":"ok","followups":[{"title":"x","body":"line one\n","agent":"a"}]}\n```';
+  expect(parseResult(out)).toMatchObject({ status: "delegated", followups: [{ title: "x", body: "line one\n", agent: "a" }] });
+});
+
 test("owner image uploads: images only, 10 MB, attachments are the hub's own media", async () => {
   const { uploadProblem, ownerAttachments, MAX_UPLOAD } = await import("../cloud/src/uploads");
   expect(uploadProblem("image/png", 1000)).toBeNull();
