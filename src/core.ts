@@ -368,10 +368,10 @@ export const recentJournal = (days = 2) =>
   list(P("journal")).slice(-days).map((p) => readFileSync(p, "utf8").slice(-4000)).join("\n");
 
 export function precedents(n = 30): string {
-  return list(P("decisions", "closed")).slice(-n).map((p) => {
-    const { meta } = readDoc(p);
-    return `- ${meta.id} [${meta.agent}] Q: ${meta.question}\n  → **${meta.answer}** (by ${meta.answered_by})`;
-  }).join("\n");
+  // the latest answers, not the last file names: by name every P-… batch and D-C… card sorts after every D-0… card
+  const at = (m: Record<string, string>) => m.answered ?? m.created ?? "";
+  return list(P("decisions", "closed")).map((p) => readDoc(p).meta).sort((a, b) => (at(a) < at(b) ? -1 : at(a) > at(b) ? 1 : 0)).slice(-n)
+    .map((meta) => `- ${meta.id} [${meta.agent}] Q: ${meta.question}\n  → **${meta.answer}** (by ${meta.answered_by})`).join("\n");
 }
 
 export function signature(agent: string, host: string, cfg: Cfg) {

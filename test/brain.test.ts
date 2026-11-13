@@ -1,6 +1,6 @@
 // The shared tool layer (cloud/src/tools.ts) over the local data repo, and the chat brain's loop with a scripted model.
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type Model, addFollowUp, context, dataActs, localStore, reopenTask, parseTurn, think } from "../src/brain";
 import { type Cfg, DATA, readDoc } from "../src/core";
@@ -158,6 +158,13 @@ test("context: open work, decisions, relevant memory, channel and reply target",
     "reply to the team's message about T-0184", "answered D-0099"]) expect(c).toContain(s);
   expect(parseTurn('noise {"reply":"hi"} noise')).toEqual({ calls: [], reply: "hi" });
   expect(parseTurn("no json")).toBeNull();
+});
+
+test("context: a proposals card lists its items, so the owner's words can be turned into item numbers", () => {
+  put("decisions/open/P-0007.md", "---\nid: P-0007\nkind: proposals\nquestion: 要做哪几项？\nitems: T-0001,T-0002\n---\n## 待确认\n1. acme-feed：fix late plays（lead）\n2. acme-docs：tidy thresholds（lead）\n");
+  const c = context(store().st, { text: "P-0007 只做 feed 那项" });
+  rmSync(join(DATA, "decisions/open/P-0007.md"));
+  expect(c).toContain("P-0007: 要做哪几项？ — 1. acme-feed：fix late plays（lead） / 2. acme-docs：tidy thresholds（lead）");
 });
 
 test("a finished task reopens under its own id, with its runs as context", () => {

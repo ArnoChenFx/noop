@@ -243,6 +243,18 @@ test("a reply to an agent's message goes to the brain with that task, never as a
   expect(drainInbound()).toEqual([{ id: "D-0001", answer: "A", source: "chat" }]);
 });
 
+test("an answer in words to a proposals card goes to the brain; numbers, all and none go straight to the card", async () => {
+  const { handleOwnerMessage, setOwnerTask, drainInbound } = await import("../src/server");
+  const calls: string[] = [];
+  setOwnerTask(async (text) => { calls.push(text); });
+  await handleOwnerMessage("只做文档那项，另一个先不做", "P-0005");
+  await handleOwnerMessage("P-0006 1、不做 2、做");
+  await handleOwnerMessage("1，3", "P-0008");
+  await handleOwnerMessage("P-0009 all");
+  expect(calls).toEqual(["P-0005 只做文档那项，另一个先不做", "P-0006 1、不做 2、做"]);
+  expect(drainInbound()).toEqual([{ id: "P-0008", answer: "1，3", source: "chat" }, { id: "P-0009", answer: "all", source: "chat" }]);
+});
+
 test("a result block survives a later turn from a background task notification", async () => {
   const lines = [
     { type: "result", result: "still compiling" },

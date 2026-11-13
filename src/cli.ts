@@ -273,7 +273,7 @@ async function handleReplies(cfg: Cfg, host: string) {
       if (resolveProposals(r.id, r.answer, `owner(${r.source})`)) {
         journal(host, `${r.id} owner approved: ${r.answer}`);
         await notify(L(`${r.id} queued as you chose`, `${r.id} 已按你的选择排队`), cfg);
-      }
+      } else if (open.has(r.id)) await notify(L(`${r.id} is still open: reply with item numbers (\`${r.id} 1,3\`), all or none`, `${r.id} 还没定：请回复编号（\`${r.id} 1,3\`）、all 或 none`), cfg);
       continue;
     }
     if (r.id.startsWith("L-")) {
