@@ -61,7 +61,7 @@ import { agentDisplayName, avatarOf } from "./avatars";
 import { badgeCount } from "./badge";
 import { CheckMark } from "./ui/icons";
 import { attachmentName, isDoc, isImage } from "./files";
-import { hubMarkdown } from "./markdown";
+import { parseHubMarkdown } from "./markdown";
 import { messageTags, taskTagId } from "./message-tags";
 import { type Channel, channelDigest, sortChannels } from "./channels";
 import { isRead, markRead, unreadEvents, toggleMessageRead, type MessageReadState as ReadState } from "./read";
@@ -623,7 +623,7 @@ function Rich(props: { text: string; muted?: boolean; quiet?: boolean; context?:
   const lineHeight = () => (props.quiet ? 19 : small ? 21 : size.line) * k();
   const doc = () => {
     // Reports preserve identifiers as text; chat-only chips can replace a heading prefix with an invisible attachment.
-    const d = TextView.parse(hubMarkdown(linkRepoRefs(props.text, props.context)), { math: false, html: false }, props.report ? [] : EXTENSIONS);
+    const d = parseHubMarkdown(linkRepoRefs(props.text, props.context), props.report, props.report ? [] : EXTENSIONS);
     return messageTags({ ...d, blocks: ghBlocks(d.blocks) }, platform.os);
   };
   return (
