@@ -25,7 +25,7 @@ import { medic } from "./medic";
 import { githubStarved } from "./github";
 import { doctor, visual } from "./visual";
 import { answerFromChat, appendEvent, cancelTask, drainInbound, feed, handleOwnerMessage, mediaDays, pruneMedia, recentChat, setApplyOp, setCancelTask, setUpdateFleet, onSettingsSaved, startServer, status as hubStatus } from "./server";
-import { addFollowUp, followUpTarget, reopenTask, type BrainOut, ClaudeModel, systemPrompt, dataActs, localStore, logBrain, think } from "./brain";
+import { addFollowUp, reopenTask, routeWithoutModel, type BrainOut, ClaudeModel, systemPrompt, dataActs, localStore, logBrain, think } from "./brain";
 import { isWrite, runTool } from "../cloud/src/tools";
 import { cloudDeploy, startCloudBridge } from "./cloud";
 import { adoptCloudUrl, readHubToml } from "./sync";
@@ -842,13 +842,17 @@ async function daemon(cfg: Cfg) {
       // out of rounds with no reply and nothing done (only lookups): the message would vanish, so it becomes work
       if (!out.reply && out.rounds >= 4 && !out.calls.some((c) => isWrite(c.tool) && c.ok)) throw new Error("no answer");
     } catch (err) {
-      // no model (CLI missing, logged out, timeout): the message still becomes work, silently — never lost, never canned
+      // no model (CLI missing, logged out, quota, timeout): the message still becomes work, never lost, never guessed onto some
+      // other task. The owner is told where it went; the reason goes to the journal and brain.jsonl (stderr is not visible)
       console.error(`chat brain: ${err}`);
-      // a terse follow-up without a reply target continues the task the channel was just about
-      const target = reply ?? followUpTarget(text, feed(new Date(Date.now() - 15 * 60_000).toISOString(), 200));
-      const amended = target ? await store.act({ tool: "amend_task", id: target, text }) : null;
-      const r = amended?.ok ? amended : await store.act({ tool: "create_task", title: text.split("\n")[0].slice(0, 80) });
-      out = { reply: "", calls: [{ tool: "fallback", args: {}, ok: !!r.ok, result: r }], rounds: 0, ms: { model: [], total: Date.now() - got }, fallback: true };
+      const routed = await routeWithoutModel(store, { text, reply, why: err });
+      post(routed.note, routed.id);
+      await locked(async () => {
+        await _pull();
+        journal(host, L(`⚠️ chat assistant unavailable (${routed.why}); the owner's message went to ${routed.id ?? "no task"}`, `⚠️ 聊天助手不可用（${routed.why}）；owner 的消息已交给 ${routed.id ?? "无任务"}`));
+        await _commitPush(`[${host}] chat assistant unavailable`);
+      });
+      out = { reply: routed.note, calls: [{ tool: "fallback", args: {}, ok: routed.ok, error: routed.why, result: { id: routed.id, amended: routed.amended } }], rounds: 0, ms: { model: [], total: Date.now() - got }, fallback: true };
     } finally { chatNow = null; }
     logBrain(m, out, got);
   });
