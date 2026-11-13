@@ -9,6 +9,7 @@
 // reply goes back as a normal feed event.
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { channelPrompt } from "./channels";
+import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import { DATA, HOME_DIR, L, P, loadConfig, _commitPush, _pull, journal, locked, now, readDoc, writeDoc } from "./core";
 import { type Ev, type FileRow, type ToolStore, type WriteOp, isWrite, listDecisions, listRoutines, listTasks, editMemoryEntry, runTool, toolsFor, writeOp } from "../cloud/src/tools";
@@ -364,10 +365,15 @@ export function logBrain(m: BrainIn, out: BrainOut, receivedAt: number) {
   } catch {}
 }
 
+export function claudeSettingsPath(env: Record<string, string | undefined> = process.env): string {
+  // HOME does not exist on Windows unless a POSIX shell set it (a daemon started from PowerShell has none):
+  // `${undefined}/.claude` is no file, the gateway env was silently dropped and the brain could not log in
+  return join(env.CLAUDE_CONFIG_DIR || join(env.HOME || homedir(), ".claude"), "settings.json");
+}
 /** `--setting-sources ""` also drops the `env` block of ~/.claude/settings.json, where an API gateway
  *  (ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY) is configured; without it the brain falls back to the OAuth login
  *  and fails with "Not logged in" while every task run works. Pass that env through explicitly. */
-export function userSettingsEnv(path = `${process.env.CLAUDE_CONFIG_DIR ?? `${process.env.HOME}/.claude`}/settings.json`): Record<string, string> {
+export function userSettingsEnv(path = claudeSettingsPath()): Record<string, string> {
   try {
     const env = JSON.parse(readFileSync(path, "utf8"))?.env;
     if (!env || typeof env !== "object") return {};
