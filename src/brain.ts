@@ -331,13 +331,22 @@ export async function think(m: BrainIn, st: ToolStore, model: Model, post: (repl
 }
 
 /** Latency log (one JSON line per message): ~/.noop/brain.jsonl, local to this machine. */
-/** Without the model: the task a terse follow-up continues. A short one-line message sent within 10 minutes of the team's
- *  last message about a task ("应该转发…", "给我中文") belongs to that task's conversation, not to a new task. */
-export function followUpTarget(text: string, events: { from: string; ts: string; ref?: string }[], now = Date.now()): string | undefined {
-  const t = text.trim();
-  if (!t || t.includes("\n") || [...t].length > 40) return undefined;
-  const last = [...events].reverse().find((e) => e.from !== "owner" && /^T-\w+$/.test(e.ref ?? ""));
-  return last && now - Date.parse(last.ts) <= 10 * 60_000 ? last.ref : undefined;
+/** The chat model cannot answer (CLI missing or logged out, quota, timeout), so nothing can tell what a message is about.
+ *  It is not guessed from recency ("the task the team spoke about last"): that silently reopened finished cards the message
+ *  had nothing to do with. A reply to a task, or a message written on a task's page, goes to that task, as the owner chose
+ *  it. Anything else becomes a new task for the lead, who sees the channel before it and decides. The owner gets a line
+ *  saying where it went (`note`), and `why` is the one-line reason for the journal. */
+export async function routeWithoutModel(st: ToolStore, o: { text: string; reply?: string; why: unknown }): Promise<{ ok: boolean; id?: string; amended: boolean; note: string; why: string }> {
+  const why = String(o.why).split("\n")[0].slice(0, 160);
+  if (o.reply) {
+    const r = await st.act({ tool: "amend_task", id: o.reply, text: o.text });
+    if (r.ok) return { ok: true, id: o.reply, amended: true, why, note: L(`The chat assistant is unavailable right now, so I added this to ${o.reply}.`, `聊天助手暂时不可用，已把这句话追加到 ${o.reply}。`) };
+  }
+  const details = `The chat assistant was unavailable (${why}), so nothing triaged this message. Read the channel before it: if it continues an existing task, answer there; otherwise handle it as a new request.`;
+  const r = await st.act({ tool: "create_task", title: o.text.split("\n")[0].slice(0, 80), details });
+  const id = typeof r.id === "string" ? r.id : undefined;
+  if (!r.ok) return { ok: false, amended: false, why, note: L("The chat assistant is unavailable and this message could not be saved as a task; please send it again.", "聊天助手暂时不可用，这句话没能保存成任务，请再发一次。") };
+  return { ok: true, id, amended: false, why, note: L(`The chat assistant is unavailable right now, so I handed this to the lead as ${id}.`, `聊天助手暂时不可用，已交总负责人 ${id}。`) };
 }
 
 export function logBrain(m: BrainIn, out: BrainOut, receivedAt: number) {
