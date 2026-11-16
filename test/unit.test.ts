@@ -622,6 +622,23 @@ test("a model-emitted followup without a title cannot abort the run", async () =
   expect(asText({ a: 1 })).toBe('{"a":1}');
 });
 
+test("a followup whose requires is a list or another non-string cannot abort the run", async () => {
+  const { newTask, readDoc, P } = await import("../src/core");
+  const read = (id: string) => readDoc(P("tasks", "inbox", `${id}.md`)).meta;
+  // an agent told "leave requires empty" sent `"requires": []`; `.split` on an array killed the worker three times
+  // (each time after a long run, so the whole run was requeued)
+  expect(read(newTask("empty list", "", { requires: [] as any })).requires).toBe("");
+  expect(read(newTask("listed", "", { requires: ["os:windows", " cli:claude "] as any })).requires).toBe("os:windows,cli:claude");
+  expect(read(newTask("string still works", "", { requires: "os:macos, host:Mac" })).requires).toBe("os:macos,host:Mac");
+  // the other string-typed fields come from the same untrusted JSON
+  const odd = read(newTask("odd fields", "", { requires: 7 as any, repo: [] as any, agent: 3 as any, host: ["a"] as any, priority: { p: 1 } as any }));
+  expect(odd.requires).toBe("7");
+  expect(odd.repo).toBe("");
+  expect(odd.agent).toBe("3");
+  expect(odd.host).toBe("a");
+  expect(odd.priority).toBe('{"p":1}');
+});
+
 test("lessons sent as a bare string are kept, not fatal", async () => {
   const { readIf, remember, P } = await import("../src/core");
   const dir = P("agents", "crashguard-test", "memory.md");

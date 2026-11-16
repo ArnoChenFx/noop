@@ -208,16 +208,23 @@ export function matches(meta: Record<string, string>, caps: string[]): boolean {
 export let approvalGate: (source: string) => boolean = () => false;
 export const setApprovalGate = (fn: (source: string) => boolean) => { approvalGate = fn; };
 
+/** Like asText, for the option fields of a task made from model output: absent stays absent, and a list (an agent
+ *  told "leave requires empty" sent `[]`) joins into the comma-separated form the card stores. */
+const optText = (v: unknown): string | undefined =>
+  v === undefined || v === null ? undefined : Array.isArray(v) ? v.map(asText).join(",") : asText(v);
+
 export function newTask(title: string, body = "", o: TaskOpts = {}): string {
   title = asText(title);
   body = asText(body);
+  // followups are model-written JSON, so any of these can arrive as a list or a number instead of a string
+  const requires = optText(o.requires), repo = optText(o.repo);
   const id = nextId("T", P("tasks"));
   // work the owner asked for (directly or via a delegated parent) never needs re-approval
   const folder = o.extra?.origin !== "owner" && approvalGate(o.source ?? "owner") ? "proposed" : "inbox";
   writeDoc(P("tasks", folder, `${id}.md`), {
-    id, title, agent: o.agent ?? "lead", cli: o.cli ?? "auto", host: o.host ?? "any",
+    id, title, agent: optText(o.agent) ?? "lead", cli: o.cli ?? "auto", host: optText(o.host) ?? "any",
     // stored at creation so hosts without the repo checked out still know what it needs
-    requires: [...new Set([...(o.requires ?? "").split(","), ...repoRequires(o.repo)].map((x) => x.trim()).filter(Boolean))].join(","), prefer: o.prefer ?? "", weight: o.weight ?? "normal", repo: o.repo ?? "", priority: o.priority ?? "normal", source: o.source ?? "owner",
+    requires: [...new Set([...(requires ?? "").split(","), ...repoRequires(repo)].map((x) => x.trim()).filter(Boolean))].join(","), prefer: o.prefer ?? "", weight: o.weight ?? "normal", repo: repo ?? "", priority: optText(o.priority) ?? "normal", source: o.source ?? "owner",
     created: now(), ...(o.extra ?? {}),
   }, body || title);
   return id;
