@@ -327,31 +327,44 @@ export async function runAgent(cli: string, prompt: string, cwd: string, cfg: Cf
 export function parseResult(out: string): Result {
   const blocks = [...out.matchAll(/```json\s*(\{[\s\S]*?\})\s*```/g)].map((m) => m[1]).reverse();
   for (const b of blocks) {
-    for (const text of [b, escapeRawControlChars(b)]) {
-      try {
-        const r = JSON.parse(text);
-        if (r.status) return r;
-      } catch {}
+    for (const text of [b, repairJson(b)]) {
+      const r = parsed(text);
+      if (r) return r;
     }
   }
   // codex (and others) sometimes end the reply with a bare JSON object instead of a fenced block
   const bare = out.match(/\{[\s\S]*\}/);
   if (bare) {
-    try {
-      const r = JSON.parse(bare[0]);
-      if (r.status) return r;
-    } catch {}
+    const r = parsed(bare[0]) ?? parsed(repairJson(bare[0]));
+    if (r) return r;
   }
   return { status: "failed", summary: `agent returned no result block. tail: ${out.slice(-300)}` };
 }
 
-/** Models occasionally put a literal line break inside a JSON string. Keep the text, make the block parseable. */
-function escapeRawControlChars(json: string): string {
+function parsed(text: string): Result | null {
+  try {
+    const r = JSON.parse(text);
+    return r?.status ? r : null;
+  } catch { return null; }
+}
+
+/** Models occasionally put a literal line break or a bare `"` inside a JSON string. Keep the text, make the block parseable.
+ * A `"` inside a string is a stray quote unless the next non-space character can follow a value (`:`, `,`, `}`, `]`, end). */
+function repairJson(json: string): string {
   let out = "", inString = false, escaped = false;
-  for (const c of json) {
+  for (let i = 0; i < json.length; i++) {
+    const c = json[i];
     if (escaped) { out += c; escaped = false; continue; }
     if (c === "\\") { out += c; escaped = true; continue; }
-    if (c === '"') { out += c; inString = !inString; continue; }
+    if (c === '"') {
+      if (!inString) { inString = true; out += c; continue; }
+      let j = i + 1;
+      while (j < json.length && /\s/.test(json[j])) j++;
+      const next = json[j] ?? "";
+      if (next === "" || next === "," || next === ":" || next === "}" || next === "]") { inString = false; out += c; }
+      else out += '\\"';
+      continue;
+    }
     if (inString && c === "\n") out += "\\n";
     else if (inString && c === "\r") out += "\\r";
     else if (inString && c === "\t") out += "\\t";

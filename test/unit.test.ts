@@ -84,6 +84,15 @@ test("work-limit resumes use a separate counter with the MAX_WAKES safety cap", 
   expect(meta.run_limits).toBe("7");
 });
 
+test("result parsing repairs a bare double quote inside a JSON string", () => {
+  // a real run (T-0016, 2026-11-16) was requeued and re-run because of this one line
+  const out = '```json\n{"status":"done","summary":"ok","lessons":["旧的两条"压到一条绑 2FA"仍在和新结论打架。"]}\n```';
+  expect(parseResult(out)).toMatchObject({ status: "done", lessons: ['旧的两条"压到一条绑 2FA"仍在和新结论打架。'] });
+  // escaped quotes and nested objects must keep parsing as before
+  const ok = '```json\n{"status":"done","summary":"say \\"hi\\"","followups":[{"title":"x"}]}\n```';
+  expect(parseResult(ok)).toMatchObject({ status: "done", summary: 'say "hi"', followups: [{ title: "x" }] });
+});
+
 test("owner image uploads: images only, 10 MB, attachments are the hub's own media", async () => {
   const { uploadProblem, ownerAttachments, MAX_UPLOAD } = await import("../cloud/src/uploads");
   expect(uploadProblem("image/png", 1000)).toBeNull();
