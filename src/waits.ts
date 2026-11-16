@@ -30,6 +30,9 @@ export const checkedFallbackMin = (cap = DEFAULT_MAX_WAIT_MIN) => cap;
 /** Wake-ups after which a task stops cycling and is parked as blocked: about 12 hours of waking at the cap (6 × 120, 36 × 20),
  * so lowering the cap checks a healthy long wait more often without parking it sooner. */
 export const tooManyWakes = (wakes: number, cap = DEFAULT_MAX_WAIT_MIN) => wakes > Math.round(720 / cap);
+/** The wake budget at the default cap. A task that keeps hitting its work limit counts against this fixed number: those are
+ * not waits, so lowering `[waits] max_minutes` must not give them more tries. */
+export const MAX_WAKES = Math.round(720 / DEFAULT_MAX_WAIT_MIN);
 
 /** A human wait has no deadline: it wakes only on an event (its wait_check changes, the owner answers or writes). */
 export function waitMeta(res: { wait_kind?: string; waiting_on?: string; wait_minutes?: number; wait_check?: string }, now = Date.now(), cap = DEFAULT_MAX_WAIT_MIN) {
