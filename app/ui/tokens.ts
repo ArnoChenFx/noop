@@ -51,6 +51,8 @@ export const controlMetrics = (sm: boolean) =>
  */
 export const corner = {
   composer: 24,
+  /** Round compact control plus its uniform four-point inset. */
+  composerCompact: (touch ? 44 : 36) / 2 + 4,
   /** A sheet or an iOS menu: the softest floating surface, as the system's. */
   sheet: 24,
   field: 10,
@@ -125,6 +127,9 @@ export const menuGlass = (tint: string, cornerRadius: number): ViewStyle => ({
  */
 export const composerGlass = (active = false): ViewStyle => ({
   ...glass(colors.field, corner.composer),
+  // Keep the material, fill, border and overflow mask on the same curve.
+  // Use the same circular outline for the compact pill and expanded field.
+  borderCurve: "circular",
   ...(platform.os === "ios" ? { backgroundColor: iosGlass ? "transparent" : alpha(colors.field, 0.25) } : {}),
   boxShadow: iosGlass ? "none" : "0 4px 16px rgba(0,0,0,0.06)",
   borderWidth: platform.os === "ios" || platform.os === "macos" ? 0 : 1,
