@@ -24,7 +24,7 @@ import { collect, LEARN_PROMPT } from "./sessions";
 import { medic } from "./medic";
 import { githubStarved } from "./github";
 import { doctor, visual } from "./visual";
-import { answerFromChat, appendEvent, cancelTask, drainInbound, feed, handleOwnerMessage, mediaDays, pruneMedia, recentChat, setApplyOp, setCancelTask, setUpdateFleet, onSettingsSaved, startServer, status as hubStatus } from "./server";
+import { ackInbound, answerFromChat, appendEvent, cancelTask, feed, handleOwnerMessage, mediaDays, pendingInbound, pruneMedia, recentChat, setApplyOp, setCancelTask, setUpdateFleet, onSettingsSaved, startServer, status as hubStatus } from "./server";
 import { addFollowUp, reopenTask, routeWithoutModel, type BrainOut, ClaudeModel, systemPrompt, dataActs, localStore, logBrain, think } from "./brain";
 import { isWrite, runTool } from "../cloud/src/tools";
 import { cloudDeploy, startCloudBridge } from "./cloud";
@@ -356,10 +356,17 @@ export const followupsOf = (res: ReturnType<typeof parseResult>, limit: number):
 
 const FOLLOW_UP = "## Owner follow-up";
 
+/** Chat answers are dropped from the on-disk queue only after the loop: a restart mid-loop hands them to the next daemon
+ * (a card already answered is not answered twice), and one that throws is not replayed every tick. */
 async function handleReplies(cfg: Cfg, host: string) {
+  const queued = pendingInbound();
+  try { await answerReplies(cfg, host, queued); } finally { ackInbound(queued.length); }
+}
+
+async function answerReplies(cfg: Cfg, host: string, queued: ReturnType<typeof pendingInbound>) {
   const open = openDecisionIds();
   const judged = recentJudgeIds();
-  const replies = [...drainInbound(), ...await pollReplies(cfg, new Set([...open, ...judged, ...pendingLoginIds()]))];
+  const replies = [...queued, ...await pollReplies(cfg, new Set([...open, ...judged, ...pendingLoginIds()]))];
   for (const r of replies) {
     if (r.id.startsWith("P-")) {
       if (resolveProposals(r.id, r.answer, `owner(${r.source})`)) {

@@ -297,7 +297,7 @@ test("pickTask: a task no machine here can run (needs another OS) never holds ba
 });
 
 test("a reply to an agent's message goes to the brain with that task, never as an amendment of the last decision", async () => {
-  const { handleOwnerMessage, setOwnerTask, drainInbound } = await import("../src/server");
+  const { handleOwnerMessage, setOwnerTask, pendingInbound, ackInbound } = await import("../src/server");
   const calls: [string, { reply?: string; answered?: string }][] = [];
   setOwnerTask(async (text, o) => { calls.push([text, { reply: o.reply, answered: o.answered }]); });
   await handleOwnerMessage("D-0001 A"); // just answered a decision: the brain hears it may be amended
@@ -305,11 +305,12 @@ test("a reply to an agent's message goes to the brain with that task, never as a
   expect(calls).toEqual([["为何我看图片不清晰呢", { reply: "T-0125", answered: undefined }]]);
   await handleOwnerMessage("等等，选 B");
   expect(calls.at(-1)).toEqual(["等等，选 B", { reply: undefined, answered: "D-0001" }]);
-  expect(drainInbound()).toEqual([{ id: "D-0001", answer: "A", source: "chat" }]);
+  expect(pendingInbound()).toEqual([{ id: "D-0001", answer: "A", source: "chat" }]);
+  ackInbound(1);
 });
 
 test("an answer in words to a proposals card goes to the brain; numbers, all and none go straight to the card", async () => {
-  const { handleOwnerMessage, setOwnerTask, drainInbound } = await import("../src/server");
+  const { handleOwnerMessage, setOwnerTask, pendingInbound, ackInbound } = await import("../src/server");
   const calls: string[] = [];
   setOwnerTask(async (text) => { calls.push(text); });
   await handleOwnerMessage("只做文档那项，另一个先不做", "P-0005");
@@ -317,7 +318,8 @@ test("an answer in words to a proposals card goes to the brain; numbers, all and
   await handleOwnerMessage("1，3", "P-0008");
   await handleOwnerMessage("P-0009 all");
   expect(calls).toEqual(["P-0005 只做文档那项，另一个先不做", "P-0006 1、不做 2、做"]);
-  expect(drainInbound()).toEqual([{ id: "P-0008", answer: "1，3", source: "chat" }, { id: "P-0009", answer: "all", source: "chat" }]);
+  expect(pendingInbound()).toEqual([{ id: "P-0008", answer: "1，3", source: "chat" }, { id: "P-0009", answer: "all", source: "chat" }]);
+  ackInbound(2);
 });
 
 test("a result block survives a later turn from a background task notification", async () => {

@@ -59,7 +59,11 @@ function pushStatus() {
   for (const ws of watching) try { ws.send(s); } catch { /* the socket is going away */ }
 }
 type Inbound = { id: string; answer: string; source: string };
-const inbound: Inbound[] = [];
+/** Answers waiting for the daemon's next tick live on disk (primary-local, next to the feed): kept in memory, an answer
+ * that came in just before a restart (self-update) was lost with no receipt, and its card stayed open. */
+const INBOUND = join(DATA, "..", "inbound.json");
+const queue = (items: Inbound[]) => items.length ? writeFileSync(INBOUND, JSON.stringify(items)) : rmSync(INBOUND, { force: true });
+const enqueue = (r: Inbound) => queue([...pendingInbound(), r]);
 /** A chat message goes to the chat brain (src/brain.ts), which replies and acts through noop's tools. `reply`: the task
  * whose message the owner replied to ("T-0125"), or whose page they wrote on; `answered`: the decision the owner answered
  * moments ago (the message may change that answer); `sentAt`: when the owner sent it (for latency). */
@@ -104,11 +108,15 @@ export function recentChat(text = "", opts: { limit?: number; hours?: number; ch
 }
 
 
-/** Replies the daemon should process (same shape as Slack/Discord replies). */
-export const drainInbound = () => inbound.splice(0);
+/** Replies the daemon should process (same shape as Slack/Discord replies), oldest first; they stay queued until
+ * `ackInbound(n)` drops the first n once handled, so a restart in between hands them to the next daemon. */
+export function pendingInbound(): Inbound[] {
+  try { return JSON.parse(readFileSync(INBOUND, "utf8")); } catch { return []; }
+}
+export const ackInbound = (n: number) => queue(pendingInbound().slice(n));
 /** A decision answer from the chat brain: an open card is answered; one answered minutes ago is amended. */
 export function answerFromChat(id: string, answer: string, amend: boolean) {
-  inbound.push({ id, answer, source: amend ? "chat-amend" : "chat" });
+  enqueue({ id, answer, source: amend ? "chat-amend" : "chat" });
   if (!amend) lastAnswer = { id, at: Date.now() };
 }
 
@@ -402,7 +410,7 @@ export async function handleOwnerMessage(
   // a proposals card takes item numbers, all or none; words ("just the docs one", "1 no 2 yes") go to the brain, which sees the items
   const words = !!ownerTask && !!id?.startsWith("P-") && !/^(all|none)\b|^[\d\s,，]+$/i.test(answer);
   if (id && !words) {
-    inbound.push({ id, answer, source: "chat" });
+    enqueue({ id, answer, source: "chat" });
     if (id.startsWith("D-")) lastAnswer = { id, at: Date.now() };
   } else if (ownerTask) {
     // everything else goes to the chat brain: it answers, looks things up, and creates or adjusts work through the tools
