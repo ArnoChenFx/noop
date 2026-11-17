@@ -146,3 +146,20 @@ test("followups of an owner-answered idle menu count as the owner's pick; a skip
   expect(dec.ownerPickedMenu(resumed("T-0303"))).toBe(false);
   expect(dec.ownerPickedMenu({ id: "T-0304", kind: "menu" })).toBe(false); // first run: nothing answered yet
 });
+
+test("a task that asks twice refreshes its card instead of opening a second one", async () => {
+  const r = { status: "needs_decision", summary: "ctx", question: "Which CIDR?", recommendation: "1", options: ["1: fill it", "2: skip"] } as any;
+  const first = dec.openDecision({ id: "T-0008", agent: "chief-of-staff", kind: "menu" }, r, "h");
+  const again = dec.openDecision({ id: "T-0008", agent: "chief-of-staff", kind: "menu" }, { ...r, question: "W8 verified, which CIDR?" }, "h");
+  expect(again).toBe(first);
+  const open = core.list(core.P("decisions", "open")).filter((p) => core.readDoc(p).meta.task === "T-0008");
+  expect(open.length).toBe(1);
+  expect(core.readDoc(open[0]).meta.question).toBe("W8 verified, which CIDR?");
+});
+
+test("a different task still gets its own card", () => {
+  const r = { status: "needs_decision", summary: "ctx", question: "Merge?", recommendation: "A", options: ["A: merge", "B: wait"] } as any;
+  const a = dec.openDecision({ id: "T-0010", agent: "lead" }, r, "h");
+  const b = dec.openDecision({ id: "T-0011", agent: "lead" }, r, "h");
+  expect(a).not.toBe(b);
+});

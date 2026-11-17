@@ -9,10 +9,14 @@ import { judgeMayDecide } from "./autonomy";
 import { isMergeCard, mergeHeadline } from "./waits";
 
 export function openDecision(task: Record<string, string>, res: Result, host: string): string {
-  const id = nextId("D", P("decisions"));
   const opts = res.options?.length ? res.options : ["A: approve", "B: reject"];
+  // One task, one card. A task that asks again (a resumed run, a re-plan, a judge send-back) used to open a
+  // second card for the same question: T-0008 left both D-0008 and D-0007 open within ten minutes, and the
+  // owner's list grew a duplicate nobody could tell apart from the real one. Refresh the open card instead.
+  const prior = list(P("decisions", "open")).map((p) => readDoc(p).meta).find((m) => m.task && m.task === task.id);
+  const id = prior?.id ?? nextId("D", P("decisions"));
   writeDoc(P("decisions", "open", `${id}.md`), {
-    id, task: task.id, agent: task.agent, host, created: now(),
+    id, task: task.id, agent: task.agent, host, created: prior?.created ?? now(),
     question: res.question ?? "", recommendation: res.recommendation ?? "", options: opts.join(" | "),
     attachments: (res.attachments ?? []).join(" | ") || undefined,
     kind: task.kind === "menu" ? "menu" : undefined,
