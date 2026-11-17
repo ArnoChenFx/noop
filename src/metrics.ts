@@ -1,7 +1,22 @@
 // Fleet metrics → fleet/metrics.json; the architect uses them to evolve prompts, rules and memory.
 import { mkdirSync, writeFileSync } from "node:fs";
-import { P, list, readDoc } from "./core";
+import { CODE, P, list, readDoc } from "./core";
 import { judgeAccuracy } from "./autonomy";
+
+// Which code produced these numbers. Twice now a host reported a healthy fleet while the daemon was still running a
+// checkout pinned 20+ commits back by local edits, so every fix merged upstream was inert there and every figure below
+// was computed by the old formula. `behind_origin` compares against the last fetched `origin/main` (no network here).
+export function codeState(root = CODE) {
+  const git = (...a: string[]) => {
+    try { return Bun.spawnSync(["git", "-C", root, ...a], { stdout: "pipe", stderr: "ignore", timeout: 3000 }).stdout.toString().trim(); }
+    catch { return ""; }
+  };
+  const commit = git("rev-parse", "--short", "HEAD");
+  if (!commit) return null; // no git checkout (source tarball, container image with .git stripped)
+  const behind = git("rev-list", "--count", "HEAD..origin/main");
+  const dirty = git("status", "--porcelain", "--untracked-files=no").split("\n").filter(Boolean).length;
+  return { commit, behind_origin: /^\d+$/.test(behind) ? Number(behind) : null, dirty_files: dirty };
+}
 
 export function computeMetrics(days = 7) {
   const since = Date.now() - days * 86400e3;
@@ -37,7 +52,7 @@ export function computeMetrics(days = 7) {
   const out = {
     shadow_judge: judgeAccuracy(),
     shadow_judge_by_agent: Object.fromEntries(Object.keys(per).map((a) => [a, judgeAccuracy(a)])), proposal_batches: approvals.length, proposals_rejected_total: rejected,
-    window_days: days, generated: new Date().toISOString(), agents,
+    window_days: days, generated: new Date().toISOString(), code: codeState(), agents,
     decisions: { total: decisions.length, open: openCards.length,
       oldest_open_days: openAges.length ? Math.round((Date.now() - Math.min(...openAges)) / 86400e3) : 0, by_judge: byWho(/^judge/), by_owner: byWho(/^owner\(/), owner_overrides_of_judge: byWho(/override/),
       owner_accepted_recommendation: rubberStamp },

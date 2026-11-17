@@ -1,8 +1,9 @@
 // Fleet metrics: `blocked/` holds tasks parked on the owner's decision, not agent failures.
 // Counting them as failures understates success and corrupts the numbers the architect uses to graduate an agent.
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const core = await import("../src/core");
 const M = await import("../src/metrics");
@@ -46,4 +47,35 @@ test("cards still open are counted, with the age of the oldest one", () => {
   expect(m.decisions.total).toBe(0);
   expect(m.decisions.open).toBe(2);
   expect(m.decisions.oldest_open_days).toBe(3);
+});
+
+// The numbers are only as good as the code that computed them. A host can report a healthy fleet while its daemon runs
+// a checkout pinned 20+ commits back by local edits — every merged fix inert there, every figure from the old formula.
+test("metrics say which code produced them, and when that code is behind or dirty", () => {
+  const m = M.computeMetrics(7);
+  expect(m.code?.commit).toMatch(/^[0-9a-f]{7,}$/);
+  expect(m.code?.dirty_files).toBeGreaterThanOrEqual(0);
+
+  // throwaway repo: one commit on main, origin/main one ahead, one uncommitted edit
+  const dir = join(tmpdir(), `noop-code-${process.pid}`);
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+  const g = (...a: string[]) => Bun.spawnSync(["git", "-C", dir, ...a], { stdout: "pipe", stderr: "ignore" });
+  g("init", "-q", "-b", "main");
+  g("config", "user.email", "t@example.com");
+  g("config", "user.name", "t");
+  writeFileSync(join(dir, "a.txt"), "1");
+  g("add", "-A");
+  g("commit", "-qm", "one");
+  g("checkout", "-qb", "side");
+  writeFileSync(join(dir, "a.txt"), "2");
+  g("commit", "-qam", "two");
+  g("update-ref", "refs/remotes/origin/main", "HEAD");
+  g("checkout", "-q", "main");
+  writeFileSync(join(dir, "a.txt"), "dirty");
+  const s = M.codeState(dir)!;
+  expect(s.behind_origin).toBe(1);
+  expect(s.dirty_files).toBe(1);
+  expect(M.codeState(join(dir, "nope"))).toBeNull(); // no git checkout → null, not a false "clean"
+  rmSync(dir, { recursive: true, force: true });
 });
