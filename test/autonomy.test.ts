@@ -46,8 +46,63 @@ test("open batch with stale tasks is closed and rebuilt (no deadlock)", async ()
   await A.proposeBatch(cfg, "pc");
   expect(files("decisions", "closed")).toEqual(["P-0001.md"]);
   expect(files("decisions", "open")).toEqual(["P-0002.md"]);
-  expect(readDoc(P("decisions", "open", "P-0002.md")).meta.items).toBe("T-0002,T-0003");
+  // the task the owner never saw (T-0003) comes first: a rebuild must surface it, not bury it behind T-0002
+  expect(readDoc(P("decisions", "open", "P-0002.md")).meta.items).toBe("T-0003,T-0002");
   expect(sent.length).toBe(2);
+});
+
+test("an unanswered batch stopped at nine never hides proposals that arrived later", async () => {
+  // the owner ignores the menu: nine proposals go out and stay unanswered
+  for (let i = 1; i <= 9; i++) task("proposed", `T-000${i}`, "followup:T-0000");
+  await A.proposeBatch(cfg, "pc");
+  expect(readDoc(P("decisions", "open", "P-0001.md")).meta.items).toBe("T-0001,T-0002,T-0003,T-0004,T-0005,T-0006,T-0007,T-0008,T-0009");
+  // later work keeps arriving outside those nine (created after the batch went out)
+  task("proposed", "T-0010", "routine:pr-review", new Date().toISOString());
+  task("proposed", "T-0011", "followup:T-0001", new Date().toISOString());
+  await A.proposeBatch(cfg, "pc");
+  expect(files("decisions", "closed")).toEqual([]); // still inside renotify_hours
+
+  // once the throttle expires, the rebuild offers the unseen tasks instead of repeating the same nine
+  const f = P("decisions", "open", "P-0001.md");
+  const { meta, body } = readDoc(f);
+  writeDoc(f, { ...meta, created: ago(300), notified: ago(300) }, body);
+  await A.proposeBatch(cfg, "pc");
+  const rebuilt = readDoc(P("decisions", "open", "P-0002.md")).meta.items.split(",");
+  expect(rebuilt.slice(0, 2)).toEqual(["T-0010", "T-0011"]);
+  expect(rebuilt.length).toBe(9);
+  expect(rebuilt).toContain("T-0001"); // the unanswered ones stay offered as filler, not dropped
+});
+
+test("an ignored backlog larger than nine is rotated daily, not re-notified every renotify window", async () => {
+  // 12 proposals, the owner answers none: the batch holds nine and three never made the slice
+  for (let i = 1; i <= 12; i++) task("proposed", `T-01${String(i).padStart(2, "0")}`, "followup:T-0000", ago(600));
+  await A.proposeBatch(cfg, "pc");
+  expect(sent.length).toBe(1);
+  const f = P("decisions", "open", "P-0001.md");
+  const rewind = (min: number) => {
+    const { meta, body } = readDoc(f);
+    writeDoc(f, { ...meta, created: ago(min), notified: ago(min) }, body);
+  };
+
+  // five hours later nothing new arrived: rotate_hours (24h) has not passed, so the owner is not pinged again
+  rewind(300);
+  await A.proposeBatch(cfg, "pc");
+  expect(files("decisions", "closed")).toEqual([]);
+  expect(sent.length).toBe(1);
+
+  // a day later the three unseen proposals get their turn
+  rewind(25 * 60);
+  await A.proposeBatch(cfg, "pc");
+  expect(files("decisions", "closed")).toEqual(["P-0001.md"]);
+  expect(readDoc(P("decisions", "open", "P-0002.md")).meta.items.split(",").length).toBe(9);
+  expect(sent.length).toBe(2);
+});
+
+test("a high-priority proposal is not queued behind nine normal ones", async () => {
+  for (let i = 1; i <= 9; i++) task("proposed", `T-000${i}`, "followup:T-0000");
+  writeDoc(P("tasks", "proposed", "T-0020.md"), { id: "T-0020", title: "urgent", agent: "lead", source: "followup:T-0000", created: ago(5), priority: "high" }, "body");
+  await A.proposeBatch(cfg, "pc");
+  expect(readDoc(P("decisions", "open", "P-0001.md")).meta.items.split(",")[0]).toBe("T-0020");
 });
 
 test("open batch whose tasks are all gone is closed right away", async () => {

@@ -96,25 +96,54 @@ export const judgeMayDecide = (cfg: Cfg, agent?: string) => level(cfg, agent) !=
 export async function proposeBatch(cfg: Cfg, host: string) {
   // only real task files: an agent appending a note to a task's old path leaves a stub without frontmatter,
   // which would show as "undefined（undefined）" and, never matching the batch, rebuild it on every tick
-  const items = list(P("tasks", "proposed"), /^T-.*\.md$/).filter((p) => readDoc(p).meta.id === fileId(p)).slice(0, 9);
-  const itemIds = items.map((p) => readDoc(p).meta.id);
+  const all = list(P("tasks", "proposed"), /^T-.*\.md$/).filter((p) => readDoc(p).meta.id === fileId(p));
   const openPath = list(P("decisions", "open")).find((p) => readDoc(p).meta.kind === "proposals");
+  const listed = openPath ? (readDoc(openPath).meta.items ?? "").split(",").filter(Boolean) : [];
+  // An unanswered batch must not hide later work: a proposal the owner has not been shown yet goes before one
+  // he already saw and left unanswered, so a rebuild surfaces new tasks instead of re-offering the same nine
+  // forever. Priority breaks ties, then path order, so the oldest of a group is still first.
+  const offered = new Set(listed);
+  const meta_ = new Map(all.map((p) => [p, readDoc(p).meta])); // one read per file, not one per comparator call
+  const rank = (p: string): [number, number] => {
+    const m = meta_.get(p)!;
+    return [offered.has(m.id) ? 1 : 0, m.priority === "high" ? 0 : m.priority === "low" ? 2 : 1];
+  };
+  const items = [...all].sort((a, b) => {
+    const [ra, rb] = [rank(a), rank(b)];
+    return ra[0] - rb[0] || ra[1] - rb[1] || a.localeCompare(b);
+  }).slice(0, 9);
+  const itemIds = items.map((p) => meta_.get(p)!.id);
   if (openPath) {
     // An unanswered batch must not block later work forever: rebuild it when it went stale
     // (its tasks left tasks/proposed) or new proposals arrived, but notify at most every few hours.
     const { meta } = readDoc(openPath);
-    const listed = (meta.items ?? "").split(",").filter(Boolean);
-    const stale = listed.some((t: string) => !itemIds.includes(t));
-    const fresh = itemIds.some((t) => !listed.includes(t));
-    if (!stale && !fresh) return;
-    const alive = listed.some((t: string) => itemIds.includes(t));
+    // judged against every proposed task, not against the nine above: once an unanswered batch is rebuilt
+    // with newer items, an older one can drop out of the slice without having been acted on
+    const proposed = new Set(all.map((p) => meta_.get(p)!.id));
+    const stale = listed.some((t) => !proposed.has(t));
+    // Only proposals that arrived after this batch went out make it fresh. Measuring against every proposed task
+    // meant a backlog larger than nine rebuilt the menu on every renotify window forever (26 proposals → a new
+    // menu every 3h, even when nothing arrived), which is the noise this batch is meant to remove.
+    const since = Date.parse(meta.created ?? meta.notified ?? "");
+    const arrived = all.some((p) => {
+      const m = meta_.get(p)!;
+      if (listed.includes(m.id)) return false;
+      const created = Date.parse(m.created ?? "");
+      return Number.isNaN(created) || Number.isNaN(since) || created >= since;
+    });
+    // Proposals older than the batch that never made the nine still get their turn, just daily rather than
+    // every renotify window, so an ignored backlog rotates without re-notifying the owner all day.
+    const unseen = [...proposed].some((t) => !listed.includes(t));
+    if (!stale && !arrived && !unseen) return;
+    const alive = listed.some((t) => proposed.has(t));
+    const waitHours = stale || arrived ? (cfg.autonomy?.renotify_hours ?? 3) : (cfg.autonomy?.rotate_hours ?? 24);
     const age = Date.now() - Date.parse(meta.notified ?? meta.created);
-    if (alive && age < (cfg.autonomy?.renotify_hours ?? 3) * 3600_000) return;
+    if (alive && age < waitHours * 3600_000) return;
     closeBatch(openPath, itemIds.length ? "superseded (rebuilt)" : "superseded (nothing left)");
     if (!itemIds.length) return;
   } else {
     if (!items.length) return;
-    const oldest = Math.min(...items.map((p) => Date.parse(readDoc(p).meta.created)));
+    const oldest = Math.min(...items.map((p) => Date.parse(meta_.get(p)!.created)));
     const batchWait = (cfg.autonomy?.batch_minutes ?? 15) * 60_000;
     if (Date.now() - oldest < batchWait && items.length < 5) return; // let a few accumulate
   }

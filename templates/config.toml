@@ -51,6 +51,7 @@ level = "onboarding"                  # onboarding → assisted → autonomous. 
                                       # (the architect proposes graduation from metrics: shadow-judge accuracy, approval rate).
 batch_minutes = 15                    # onboarding: self-generated tasks are batched into one approval message (P-xxxx)
 renotify_hours = 3                    # an unanswered batch is rebuilt (stale/new items) at most this often
+rotate_hours = 24                     # proposals older than the batch that never made its nine rotate in this often
 # auto_routines = ["uptime-watch"]    # extra read-only routines that skip approval (same as readonly = true)
 
 [idle]
