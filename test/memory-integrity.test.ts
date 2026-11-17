@@ -139,6 +139,16 @@ test("damaged remote and damaged local: sync-base keeps the good copy, recovery 
   expect(await remoteText("memory/principles.md")).toBe("# principles\n- p1\n");
 });
 
+test("resetToUpstream also discards a zero-filled file", async () => {
+  as("a"); put("a", "memory/reset.md", "# reset\n- good\n"); expect(await sync.commitPush("a: reset seed")).toBe(true);
+  as("b"); await sync.pull();
+  put("b", "memory/reset.md", zeros(15)); // the crash hit host b
+  expect(await sync.commitPush("b: nothing to push")).toBe(true);
+  expect(await sync.resetToUpstream()).toBe(true);
+  expect(get("b", "memory/reset.md")).toBe("# reset\n- good\n");
+  expect(await remoteText("memory/reset.md")).toBe("# reset\n- good\n");
+});
+
 test("guardMemory (daemon): restores, journals what it did, takes today's snapshot, and never throws", () => {
   sync.setSyncData(DATA, HOME_DIR); sync.setTransport(null);
   mkdirSync(P("memory"), { recursive: true }); mkdirSync(P("journal"), { recursive: true });

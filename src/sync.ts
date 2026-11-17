@@ -179,10 +179,11 @@ function writeAtomic(abs: string, data: Uint8Array) {
 // damaged remote version never replaces a good local file. Each new case is reported once through takeDamageAlerts().
 export type DamageAlert = { path: string; bytes: number; nul: number; side: "local" | "remote" };
 const damageSeen = new Map<string, string>(), damageNew: DamageAlert[] = [];
+const seenKey = (rel: string) => `${HOME()}|${rel}`; // per mirror (tests switch between hosts)
 function noteDamaged(rel: string, data: Uint8Array, side: DamageAlert["side"]) {
   const sig = `${side}:${data.length}:${hash(data)}`;
-  if (damageSeen.get(rel) === sig) return;
-  damageSeen.set(rel, sig);
+  if (damageSeen.get(seenKey(rel)) === sig) return;
+  damageSeen.set(seenKey(rel), sig);
   const a = { path: rel, bytes: data.length, nul: nulCount(data), side };
   damageNew.push(a);
   console.error(`sync: ${rel} (${side}) is damaged: ${a.nul} of ${a.bytes} bytes are NUL; not syncing it`);
@@ -215,7 +216,7 @@ export function scan(st: State): Change[] {
     const h = hash(data);
     if (e && e.h === h) { e.m = m; e.s = s; continue; }
     if (isDamaged(rel, data)) { noteDamaged(rel, data, "local"); continue; } // zero-filled by a crash: keep the good copy upstream and in sync-base
-    damageSeen.delete(rel);
+    damageSeen.delete(seenKey(rel));
     changes.push({ path: rel, base_version: e?.v ?? 0, content: b64(data), _bytes: data, _hash: h });
   }
   for (const [rel, e] of Object.entries(st.files)) if (!seen.has(rel) && !ignored(rel)) changes.push({ path: rel, base_version: e.v, deleted: true });
@@ -435,7 +436,9 @@ export async function resetToUpstream(): Promise<boolean> {
   if (!t) return true;
   return withLock(async () => {
     const st = loadState();
-    revertLocal(scan(st).map((c) => c.path));
+    // scan() leaves out zero-filled files (they are not edits to push), but a reset must discard them too
+    const damaged = walk().filter((rel) => { const d = readLocal(rel); return !!d && isDamaged(rel, d); });
+    revertLocal([...scan(st).map((c) => c.path), ...damaged]);
     for (const e of Object.values(st.files)) e.m = -1;
     return (await _pull(st, t)).ok;
   });
