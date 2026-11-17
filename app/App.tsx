@@ -190,6 +190,7 @@ import {
   type TaskInfo,
 } from "./hub";
 import { notificationFor, type NotifyRules } from "./notify";
+import { DEMO_CODE, DEMO_EMAIL, DEMO_TOKEN, DEMO_TOTP, DEMO_URL, hubFetch, isDemo, openSocket, type Socket } from "./demo";
 // Email sign-in code length (cloud/src/index.ts CODE_LEN): letters and digits, case-insensitive.
 const CODE_LEN = 8;
 
@@ -264,7 +265,7 @@ function createHub(cfg: Config) {
   const loaded = signal(false);
   const headers = { Authorization: `Bearer ${cfg.token}`, "Content-Type": "application/json" };
   let disposed = false;
-  let socket: WebSocket | null = null;
+  let socket: Socket | null = null;
   let retry: ReturnType<typeof setTimeout> | undefined;
   let failures = 0;
   let lastFrame = 0;
@@ -277,7 +278,7 @@ function createHub(cfg: Config) {
   async function loadFeed() {
     const since = last();
     try {
-      const r = await fetch(`${cfg.url}/api/feed${since ? `?since=${encodeURIComponent(since)}` : ""}`, { headers });
+      const r = await hubFetch(`${cfg.url}/api/feed${since ? `?since=${encodeURIComponent(since)}` : ""}`, { headers });
       if (r.status === 401) return conn.set("unauthorized");
       const body = (await r.json()) as { events: HubEvent[] };
       const ip = ipBlocked(r.status, body);
@@ -293,7 +294,7 @@ function createHub(cfg: Config) {
 
   async function loadStatus() {
     try {
-      const r = await fetch(`${cfg.url}/api/status`, { headers });
+      const r = await hubFetch(`${cfg.url}/api/status`, { headers });
       if (r.ok) status.set((await r.json()) as Status);
     } catch {
       /* the feed reports the connection */
@@ -302,7 +303,7 @@ function createHub(cfg: Config) {
 
   function stream() {
     if (disposed || untracked(conn) === "unauthorized") return;
-    const ws = new WebSocket(wsUrl(cfg.url, cfg.token));
+    const ws = openSocket(wsUrl(cfg.url, cfg.token));
     socket = ws;
     ws.onopen = () => {
       failures = 0;
@@ -337,7 +338,7 @@ function createHub(cfg: Config) {
   async function upload(a: Attachment): Promise<string> {
     const fd = new FormData();
     fd.append("file", a.file, a.name);
-    const r = await fetch(`${cfg.url}/api/uploads`, { method: "POST", headers: { Authorization: headers.Authorization }, body: fd });
+    const r = await hubFetch(`${cfg.url}/api/uploads`, { method: "POST", headers: { Authorization: headers.Authorization }, body: fd });
     if (r.status === 401) conn.set("unauthorized");
     if (!r.ok) throw new Error(L(`Image upload failed (${r.status})`, `图片上传失败（${r.status}）`));
     return ((await r.json()) as { url: string }).url;
@@ -346,7 +347,7 @@ function createHub(cfg: Config) {
   async function send(text: string, replyTo: string | null, files: Attachment[] = [], thread = false, clientId?: string, channel?: string) {
     const attachments: string[] = [];
     for (const f of files) attachments.push(await upload(f));
-    const r = await fetch(`${cfg.url}/api/messages`, {
+    const r = await hubFetch(`${cfg.url}/api/messages`, {
       method: "POST",
       headers,
       body: JSON.stringify({ text, ...(clientId ? { client_id: clientId } : {}), ...(replyTo ? { reply_to: replyTo } : {}), ...(attachments.length ? { attachments } : {}), ...(thread ? { thread } : {}), ...(channel ? { channel } : {}) }),
@@ -359,7 +360,7 @@ function createHub(cfg: Config) {
   }
 
   async function settings(patch?: Record<string, unknown>): Promise<SettingsView> {
-    const r = await fetch(`${cfg.url}/api/settings`, patch ? { method: "PUT", headers, body: JSON.stringify(patch) } : { headers });
+    const r = await hubFetch(`${cfg.url}/api/settings`, patch ? { method: "PUT", headers, body: JSON.stringify(patch) } : { headers });
     if (r.status === 401) conn.set("unauthorized");
     if (!r.ok) throw new Error(L(`Couldn’t ${patch ? "save" : "load"} settings (${r.status})`, `设置${patch ? "保存" : "读取"}失败（${r.status}）`));
     return (await r.json()) as SettingsView;
@@ -368,7 +369,7 @@ function createHub(cfg: Config) {
   /** A JSON call of the hub's API: never throws (status 0 when unreachable); a 401 ends the session. */
   async function api(method: string, path: string, body?: unknown): Promise<{ ok: boolean; status: number; data: Record<string, unknown> }> {
     try {
-      const r = await fetch(`${cfg.url}${path}`, method === "GET" ? { headers } : { method, headers, body: JSON.stringify(body ?? {}) });
+      const r = await hubFetch(`${cfg.url}${path}`, method === "GET" ? { headers } : { method, headers, body: JSON.stringify(body ?? {}) });
       if (r.status === 401) conn.set("unauthorized");
       let data: Record<string, unknown> = {};
       try {
@@ -384,7 +385,7 @@ function createHub(cfg: Config) {
 
   async function logout() {
     try {
-      await fetch(`${cfg.url}/api/auth/logout`, { method: "POST", headers });
+      await hubFetch(`${cfg.url}/api/auth/logout`, { method: "POST", headers });
     } catch {
       /* forgotten locally either way */
     }
@@ -843,7 +844,7 @@ function clearDocCache() {
 }
 function loadDoc(src: string, body: Signal<DocBody>) {
   body.set({ text: null, error: "" });
-  void fetch(src)
+  void hubFetch(src)
     .then(async (r) => {
       if (r.ok) return body.set({ text: stripFrontMatter(await r.text()), error: "" });
       body.set({ text: null, error: r.status === 404 ? L("This file has expired.", "这个文件已过期。") : L(`Couldn’t load (${r.status})`, `读取失败（${r.status}）`) });
@@ -2372,7 +2373,7 @@ function Sidebar(props: {
 function UserMenu(props: { hub: Hub; onSettings: () => void; reads: MessageReads }) {
   /** The signed-in account: its email, shown as the local part; the server address stays out of the UI. */
   const email = signal("");
-  void Storage.getItem(KEYS.email).then((e) => email.set(e ?? ""));
+  void Storage.getItem(KEYS.email).then((e) => email.set(isDemo(props.hub.cfg.url) ? DEMO_EMAIL : e ?? ""));
   const account = () => email().split("@")[0] ?? "";
   // A pointer gets a compact popup at the trigger; a finger gets the sheet at the bottom with rows it can hit.
   const touch = platform.os === "ios" || platform.os === "android";
@@ -5446,9 +5447,9 @@ function Field(props: {
 const RESEND = 60;
 
 async function postJson(url: string, body: unknown): Promise<{ status: number; data: Record<string, unknown> }> {
-  let r: Response;
+  let r: Awaited<ReturnType<typeof hubFetch>>;
   try {
-    r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    r = await hubFetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   } catch {
     throw new Error("unreachable");
   }
@@ -5478,6 +5479,7 @@ function Login(props: { url: string; served: boolean; email: string; notice?: st
   const unreachable = () => L(`Can’t reach ${server()}. Check the address and your network.`, `连不上服务器 ${server()}，请检查地址和网络`);
 
   const viaCli = signal(false); // email not set up yet: the code is shown by `noop login` on the owner's machine
+  const viaDemo = signal(false); // the demo server (address "demo"): any code works
   async function sendCode() {
     const e = email().trim();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return error.set(L("Enter a valid email address", "请填写有效的邮箱地址"));
@@ -5495,6 +5497,7 @@ function Login(props: { url: string; served: boolean; email: string; notice?: st
       if (r.status >= 400) throw new Error(L(`The server returned ${r.status}. This address may not be a noop server.`, `服务器返回 ${r.status}，这个地址可能不是 noop`));
       await Storage.setItem(KEYS.email, e);
       viaCli.set(r.data.delivery === "cli");
+      viaDemo.set(r.data.delivery === "demo");
       code.set("");
       step.set("code");
       wait.set(RESEND);
@@ -5531,6 +5534,12 @@ function Login(props: { url: string; served: boolean; email: string; notice?: st
       busy.set(false);
     }
   }
+  /** The in-app demo server: a simulated team, nothing leaves the device (app/demo.ts). */
+  async function tryDemo() {
+    await Storage.setItem(KEYS.url, DEMO_URL);
+    await Storage.setItem(KEYS.token, DEMO_TOKEN);
+    props.onLogin({ url: DEMO_URL, token: DEMO_TOKEN });
+  }
   const onCode = (v: string) => {
     const c = v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, CODE_LEN);
     code.set(c);
@@ -5550,7 +5559,7 @@ function Login(props: { url: string; served: boolean; email: string; notice?: st
             <Mark size={48} />
             <Text style={{ fontSize: 28, fontWeight: "600", color: colors.text, letterSpacing: -0.3 }}>{L("Sign in to Noop", "登录 Noop")}</Text>
             <Text style={{ fontSize: 15.5, lineHeight: 23, color: colors.muted, textAlign: "center" }}>
-              {step() === "email" ? L("Sign in with email. We’ll send you an 8-character code.", "用邮箱登录：我们会发一个 8 位验证码给你（字母和数字）。") : viaCli() ? L("Email isn’t set up yet. Run noop login in your host’s terminal to see the code.", "还没配置发信邮箱：在你的主机终端运行 noop login 查看验证码。") : L(`We sent a code to ${email().trim()}. Check your email.`, `验证码已发到 ${email().trim()}，请查收邮件。`)}
+              {step() === "email" ? L("Sign in with email. We’ll send you an 8-character code.", "用邮箱登录：我们会发一个 8 位验证码给你（字母和数字）。") : viaDemo() ? L(`Demo server: enter ${DEMO_CODE} and ${DEMO_TOTP}.`, `演示服务器：验证码填 ${DEMO_CODE}，两步验证码填 ${DEMO_TOTP}。`) : viaCli() ? L("Email isn’t set up yet. Run noop login in your host’s terminal to see the code.", "还没配置发信邮箱：在你的主机终端运行 noop login 查看验证码。") : L(`We sent a code to ${email().trim()}. Check your email.`, `验证码已发到 ${email().trim()}，请查收邮件。`)}
             </Text>
           </View>
           <View style={{ gap: 18, padding: 22, borderRadius: 16, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface }}>
@@ -5639,6 +5648,14 @@ function Login(props: { url: string; served: boolean; email: string; notice?: st
               <Button testID="verify" label={busy() ? L("Signing in…", "登录中…") : L("Sign in", "登录")} variant="primary" loading={busy()} disabled={code().length !== CODE_LEN || totp().length !== 6} grow onPress={verify} />
             </If>
           </View>
+          <If when={!props.served && step() === "email"}>
+            <View style={{ flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 4 }}>
+              <Text style={{ fontSize: 14, color: colors.muted }}>{L("No Noop server yet?", "还没有 Noop 服务器？")}</Text>
+              <View role="button" testID="try-demo" accessibilityLabel={L("Try the demo", "试用演示")} onPress={tryDemo} hoverStyle={hovered()} style={{ height: 30, justifyContent: "center", paddingHorizontal: 6, borderRadius: 6 }}>
+                <Text style={{ fontSize: 14, fontWeight: "500", color: colors.accent }}>{L("Try the demo", "试用演示")}</Text>
+              </View>
+            </View>
+          </If>
         </View>
       </View>
     </Scroll>
