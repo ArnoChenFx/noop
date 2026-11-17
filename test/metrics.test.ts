@@ -36,3 +36,14 @@ test("an agent that only ever asked for a decision has no success rate to judge"
   expect(m.agents["chief-of-staff"].blocked).toBe(2);
   expect(m.agents["chief-of-staff"].success).toBeNull();
 });
+
+// The blind spot that let 14 cards sit unanswered: this file counted only decisions/closed, so an owner who never
+// answers reported as decisions.total = 0 — indistinguishable from a fleet that never had to ask anything.
+test("cards still open are counted, with the age of the oldest one", () => {
+  writeDoc(P("decisions", "open", "D-0001.md"), { id: "D-0001", created: new Date(Date.now() - 3 * 86400e3).toISOString() }, "q");
+  writeDoc(P("decisions", "open", "D-0002.md"), { id: "D-0002", created: at(30) }, "q");
+  const m = M.computeMetrics(7);
+  expect(m.decisions.total).toBe(0);
+  expect(m.decisions.open).toBe(2);
+  expect(m.decisions.oldest_open_days).toBe(3);
+});

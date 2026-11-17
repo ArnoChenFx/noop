@@ -15,6 +15,10 @@ export function computeMetrics(days = 7) {
       if (m.started && m.finished) a.minutes.push((Date.parse(m.finished) - Date.parse(m.started)) / 60e3);
     }
   const decisions = list(P("decisions", "closed")).map((p) => readDoc(p).meta).filter((m) => Date.parse(m.answered ?? "") > since);
+  // Cards still waiting on the owner are this fleet's main failure mode, and counting only decisions/closed made them
+  // invisible: 14 open cards and 0 answers reported as decisions.total = 0, i.e. as nothing at all.
+  const openCards = list(P("decisions", "open"), /^D-.*\.md$/).map((p) => readDoc(p).meta);
+  const openAges = openCards.map((m) => Date.parse(m.created ?? "")).filter((t) => !Number.isNaN(t));
   const byWho = (re: RegExp) => decisions.filter((m) => re.test(m.answered_by ?? "")).length;
   // owner answering the same agent's questions with the recommended option → candidate for auto-approval
   const rubberStamp: Record<string, number> = {};
@@ -34,7 +38,8 @@ export function computeMetrics(days = 7) {
     shadow_judge: judgeAccuracy(),
     shadow_judge_by_agent: Object.fromEntries(Object.keys(per).map((a) => [a, judgeAccuracy(a)])), proposal_batches: approvals.length, proposals_rejected_total: rejected,
     window_days: days, generated: new Date().toISOString(), agents,
-    decisions: { total: decisions.length, by_judge: byWho(/^judge/), by_owner: byWho(/^owner\(/), owner_overrides_of_judge: byWho(/override/),
+    decisions: { total: decisions.length, open: openCards.length,
+      oldest_open_days: openAges.length ? Math.round((Date.now() - Math.min(...openAges)) / 86400e3) : 0, by_judge: byWho(/^judge/), by_owner: byWho(/^owner\(/), owner_overrides_of_judge: byWho(/override/),
       owner_accepted_recommendation: rubberStamp },
   };
   mkdirSync(P("fleet"), { recursive: true });
