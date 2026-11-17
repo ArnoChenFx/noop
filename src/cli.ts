@@ -29,7 +29,7 @@ import { addFollowUp, reopenTask, routeWithoutModel, type BrainOut, ClaudeModel,
 import { isWrite, runTool } from "../cloud/src/tools";
 import { cloudDeploy, startCloudBridge } from "./cloud";
 import { adoptCloudUrl, readHubToml } from "./sync";
-import { judgeAccuracy, level, needsApproval, noteStuckRoutine, proposeBatch, resolveProposals, routineQueued, supersedeProposed } from "./autonomy";
+import { judgeAccuracy, level, needsApproval, noteStuckRoutine, proposeBatch, resolveProposals, routineParkedOnDecision, routineQueued, supersedeProposed } from "./autonomy";
 import { CODE, L, UPDATE_REQUEST, type UpdateState, setUpdateState, updateState, allowedClis, cliHintPatch, capOk, idTagFor, isPrimary, runningRev, setApprovalGate, setIdTag } from "./core";
 import { accountEnv, accountsStatus, classify, failoverAccount, pendingLoginIds, pickAccount, reportFailure, retryLogins, submitLoginCode } from "./accounts";
 import { channelPrompt, channels, resolveChannels, updateChannel } from "./channels";
@@ -102,6 +102,18 @@ function runRoutines(cfg: Cfg, host: string, primary: boolean) {
       state[r.name] = new Date().toISOString();
       journal(host, `⏰ routine \`${r.name}\` skipped: ${queued} still queued/running`);
       noteStuckRoutine(cfg, r.name, queued, state);
+      continue;
+    }
+    // opt-in: a copy already parked on an unanswered decision would only be repeated by every later run
+    const parked = r.skip_while_decision_open ? routineParkedOnDecision(r.name, pin) : "";
+    if (parked) {
+      state[r.name] = new Date().toISOString();
+      // once per parked copy, not once per skipped tick: a 10m routine would otherwise fill the journal with the same line
+      const key = `${r.name}#parked`;
+      if (state[key] !== parked) {
+        state[key] = parked;
+        journal(host, `⏰ routine \`${r.name}\` skipped: ${parked} waits on the owner's answer`);
+      }
       continue;
     }
     if (r.signal && !signalChanged(r, state)) { state[r.name] = new Date().toISOString(); continue; } // nothing new → no AI run

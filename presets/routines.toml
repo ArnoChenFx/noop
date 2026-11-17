@@ -12,6 +12,7 @@ Dedupe against tasks/ and journal/, then emit follow-ups routed to the right age
 [[routine]]
 name = "uptime-watch"
 readonly = true                       # only observes: runs without approval; changes come back as gated followups
+skip_while_decision_open = true       # a copy already parked on an unanswered decision (e.g. "give me an alert source") is not duplicated every 10 minutes
 every = "10m"
 agent = "ops-watcher"
 priority = "high"

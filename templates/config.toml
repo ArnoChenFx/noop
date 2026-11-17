@@ -108,6 +108,8 @@ extra = []                            # more Claude Code tool patterns to hard-b
 
 # ------------------------------------------------------------------ routines (signal → task generators)
 # every: "15m" | "hourly" | "daily HH:MM" | "weekdays HH:MM" | "weekly MON HH:MM"
+# skip_while_decision_open = true: while a previous copy of this routine waits on an unanswered decision, do not start
+# new copies (each would only repeat the same report); the parked copy resumes when the owner answers.
 # More examples (PR review, CI, uptime, nightly builds): presets/routines.toml in the Noop code.
 # requires = hard capability (task waits for such a host) ; prefer = soft (falls back to anyone)
 

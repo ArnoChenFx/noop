@@ -40,6 +40,30 @@ export function routineQueued(name: string, host?: string): string {
   return "";
 }
 
+/** Id of a copy of this routine parked on an unanswered decision, else "".
+ *  Such a copy already asked the only question every later run would ask again: until the owner answers, a new run can
+ *  only repeat the same report (routine `skip_while_decision_open = true`). Waits on CI or a merge do not count.
+ *  `host`: a per-machine routine (scheduler "each") only counts its own machine's copies. */
+export function routineParkedOnDecision(name: string, host?: string): string {
+  const open = (id: string) => /^D-\d+$/.test(id) && existsSync(P("decisions", "open", `${id}.md`));
+  for (const p of list(P("tasks", "waiting"), /^T-.*\.md$/)) {
+    const m = readDoc(p).meta;
+    if (!isRoutine(m, name) || (host && m.host !== host)) continue;
+    if ((m.wait_kind ?? "human") !== "human") continue;
+    // the card path, not a bare id: a wait on a PR that merely mentions "D-0004" must not silence the routine
+    const id = (m.waiting_on ?? "").match(/decisions\/open\/(D-\d+)\.md/)?.[1];
+    if (id && open(id)) return m.id;
+  }
+  // the standard path: a run that returns needs_decision is parked in tasks/blocked with meta.decision (src/cli.ts,
+  // src/supervisor.ts). Most routine copies ask the owner this way, so waiting-only left the flag doing nothing for them.
+  for (const p of list(P("tasks", "blocked"), /^T-.*\.md$/)) {
+    const m = readDoc(p).meta;
+    if (!isRoutine(m, name) || (host && m.host !== host)) continue;
+    if (open(m.decision ?? "")) return m.id;
+  }
+  return "";
+}
+
 /** A routine skipped behind a copy no online host can run (parked in the inbox) for 30+ minutes: tell the owner once per copy.
  *  The skips only reach the journal and the stall supervisor only sees waiting/blocked tasks, so such a copy silences the routine. */
 export function noteStuckRoutine(cfg: Cfg, name: string, id: string, state: Record<string, string>) {
