@@ -19,7 +19,9 @@ export async function securityReport(cfg: Cfg, host: string, primary: boolean): 
   // ---- the Worker (the owner's own Cloudflare deployment)
   if (!url) add("warn", "Worker", L("[cloud] url is not configured: no cloud deployment to check", "没有配置 [cloud] url：没有云端部署可查"));
   else {
-    const call = (path: string) => fetch(`${url}${path}`, { headers: { Authorization: `Bearer ${token}`, "x-noop-host": host } });
+    // A dead or unroutable Worker must fail this check quickly, not hang the whole command.
+    const call = (path: string) =>
+      fetch(`${url}${path}`, { headers: { Authorization: `Bearer ${token}`, "x-noop-host": host }, signal: AbortSignal.timeout(15_000) });
     const tf = await call("/api/host/2fa").catch((e) => e as Error);
     if (tf instanceof Error) add("bad", "Worker", L(`Cannot reach ${url}: ${tf.message}`, `连不上 ${url}：${tf.message}`));
     else if (tf.status === 403 && (await tf.clone().json().catch(() => ({})) as { error?: string }).error === "ip_blocked") {
