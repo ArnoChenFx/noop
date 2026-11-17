@@ -5,7 +5,7 @@ import { $ } from "bun";
 import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync } from "node:fs";
 import { parseArgs } from "node:util";
 import {
-  type Cfg, P, ROOT, _commitPush, _pull, agentName, asText, chooseCli, claim, commitPush, heartbeat, hostCaps, hostName, journal,
+  type Cfg, P, ROOT, _commitPush, _pull, agentName, asText, chooseCli, claim, commitPush, guardMemory, heartbeat, hostCaps, hostName, journal,
   list, loadConfig, locked, newTask, now, onlineHosts, pickTask, pull, readDoc, remember, writeDoc,
 } from "./core";
 import { amendDecision, closeDecision, IGNORE, ignoreDecision, openDecision, overrideJudge, ownerPickedMenu, recentJudgeIds, routeDecision } from "./decisions";
@@ -1005,6 +1005,7 @@ async function daemon(cfg: Cfg) {
   });
   await locked(async () => { // recover tasks this host was running when it died/restarted
     await _pull();
+    guardMemory(host, { full: true }); // a crash may have zero-filled a memory file: restore it before anything reads it
     for (const p of list(P("tasks", "active"), /^T-.*\.md$/)) {
       const { meta, body } = readDoc(p);
       if (meta.claimed_by !== host) continue;
@@ -1030,6 +1031,7 @@ async function daemon(cfg: Cfg) {
       if (restartAllowed(force)) { unlinkSync(RESTART_FLAG()); void drainAndExit("restart", host); }
     }
     if (!draining) await ownerUpdate(c, host);
+    await locked(() => guardMemory(host)); // damage sync reported since the last tick; the daily memory snapshot
     try { await tick(c, true); failures = 0; } catch (e) {
       console.error("tick failed", e);
       if (++failures >= 3) void medic(`noop daemon: ${failures} consecutive tick failures on ${host}.\n${(e as Error)?.stack ?? e}`, c, { auto: true, kind: "daemon" });

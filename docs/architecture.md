@@ -28,6 +28,7 @@
 | `src/cli.ts` | CLI entry and the daemon loop (`pull → routines → replies → judge → run tasks → push`) |
 | `src/core.ts` | config, local paths (`HOME_DIR`), tasks, claims, journal, `locked()` |
 | `src/sync.ts` | file sync with the Worker (CAS commit, pull, merge of append-only files) |
+| `src/integrity.ts` | torn-write protection: spots zero-filled files, durable writes, restores memory files, daily memory snapshots |
 | `src/runner.ts` | prompt building and running Claude Code / Codex |
 | `src/decisions.ts`, `src/autonomy.ts` | the judge, proposals, graduated autonomy |
 | `src/gates.ts`, `src/github.ts` | hard gates, GitHub quota etiquette |
@@ -41,7 +42,7 @@
 | `app/` | the NSH client; machines download the web package from the latest release (`src/webclient.ts`), and `app/build-web.sh` builds it locally |
 | `templates/` | default config, agents, policies and memory seeded into a new install |
 
-Machine-local files live in `HOME_DIR` (`$NOOP_HOME`, else `~/.noop`, falling back to an existing `~/.agent-hub`): `noop.toml` (Worker URL + machine token), `sync.json`, `data/` (the mirror), accounts, logs.
+Machine-local files live in `HOME_DIR` (`$NOOP_HOME`, else `~/.noop`, falling back to an existing `~/.agent-hub`): `noop.toml` (Worker URL + machine token), `sync.json`, `sync-base/` (last synced content of each file), `memory-snapshots/<day>/` (one copy of the memory files per day, newest 14 kept, never synced), `data/` (the mirror), accounts, logs.
 
 ## Worker API
 

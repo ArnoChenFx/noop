@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFile
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import * as sync from "./sync";
+import { recoverMemory, snapshotMemory } from "./integrity";
 import { BUILTIN_ROUTINES } from "./builtin-routines";
 
 /** Framework code (this repo, self-updating). */
@@ -389,6 +390,30 @@ export function journal(host: string, line: string) {
   const f = P("journal", `${today()}.md`);
   if (!existsSync(f)) writeFileSync(f, `# Journal ${today()}\n\n`);
   appendFileSync(f, `- ${hhmm()} \`${host}\` ${line}\n`);
+}
+
+/** Torn-write protection (src/integrity.ts). A crash can leave a file at full length but zero-filled; sync refuses to push such
+ *  a file. Here: memory files in that state are restored from the last good copy (sync-base, then the daily snapshots) and the
+ *  restore is journaled; any other damaged file sync skipped is journaled once; one snapshot of the memory files per day goes to
+ *  <home>/memory-snapshots (outside the data folder, never synced). `full` checks every memory file (daemon start); otherwise only
+ *  the files sync reported since the last call. Never throws: this must not take the daemon down. Call it inside `locked`. */
+export function guardMemory(host: string, opts: { full?: boolean } = {}) {
+  try {
+    const alerts = sync.takeDamageAlerts();
+    const only = opts.full ? undefined : [...new Set(alerts.map((a) => a.path))];
+    const { restored, unrecovered } = recoverMemory(DATA, sync.syncBaseDir(), sync.snapshotDir(), only);
+    for (const r of restored) journal(host, L(`🩹 ${r.path} was zero-filled by a crash; restored ${r.bytes} bytes from ${r.from} (edits after that copy are lost)`, `🩹 ${r.path} 被崩溃写成全零；已从 ${r.from} 恢复 ${r.bytes} 字节（该副本之后的改动已丢失）`));
+    for (const u of unrecovered) journal(host, L(`⚠️ ${u.path} is damaged (${u.nul} of ${u.bytes} bytes are NUL) and no good copy exists; it is not synced`, `⚠️ ${u.path} 已损坏（${u.bytes} 字节里有 ${u.nul} 个 NUL）且没有可用的好副本；不会同步它`));
+    const handled = new Set([...restored.map((r) => r.path), ...unrecovered.map((u) => u.path)]);
+    for (const a of alerts) {
+      if (handled.has(a.path)) continue;
+      journal(host, a.side === "remote"
+        ? L(`⚠️ the cloud copy of ${a.path} is damaged (${a.nul} of ${a.bytes} bytes are NUL); the local copy replaces it on the next sync`, `⚠️ 云端的 ${a.path} 已损坏（${a.bytes} 字节里有 ${a.nul} 个 NUL）；下次同步用本机副本覆盖它`)
+        : L(`⚠️ ${a.path} is damaged (${a.nul} of ${a.bytes} bytes are NUL); it is not synced`, `⚠️ ${a.path} 已损坏（${a.bytes} 字节里有 ${a.nul} 个 NUL）；不会同步它`));
+    }
+    const snap = snapshotMemory(DATA, sync.snapshotDir(), today());
+    if (snap.skipped.length) journal(host, L(`⚠️ memory snapshot skipped damaged files: ${snap.skipped.join(", ")}`, `⚠️ 记忆快照跳过了损坏的文件：${snap.skipped.join("、")}`));
+  } catch (e) { console.error("memory guard failed", e); }
 }
 
 export function remember(agent: string, lessons: string[] | undefined, source: string) {
