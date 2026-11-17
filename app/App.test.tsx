@@ -2077,6 +2077,96 @@ describe("commands", () => {
     await app.waitUntil(() => puts.length === 3);
     expect(puts[2]).toEqual({ commands: [{ name: "今日", text: "把今天各项目的进展整理成日报发给我" }] });
   });
+
+  test("settings adds and toggles shared MCP servers, refusing literal keys", async () => {
+    const posts: { text: string; reply_to?: string }[] = [], puts: any[] = [], updates = { n: 0 };
+    const app = await open("./App.tsx", { storage: STORAGE, width: 1200, height: 800, platform: "macos", network: server(posts, puts, updates) });
+    await app.press("id:user-menu");
+    await app.press("id:settings");
+    await app.press("id:settings-tab-mcp");
+    await app.press("id:mcp-new");
+    await app.waitFor("id:mcp-editor");
+    await app.type("id:mcp-name", "github");
+    await app.type("id:mcp-command", "npx -y @modelcontextprotocol/server-github");
+    await app.type("id:mcp-env", "GITHUB_PERSONAL_ACCESS_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123");
+    await app.press("id:mcp-save");
+    await app.waitFor("id:mcp-note");
+    expect(puts.length).toBe(0);
+    await app.clear("id:mcp-env");
+    await app.type("id:mcp-env", "GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}");
+    await app.press("id:mcp-save");
+    await app.waitUntil(() => puts.length === 1);
+    expect(puts[0]).toEqual({ mcp_servers: [{ name: "github", type: "stdio", enabled: true, command: "npx", args: ["-y", "@modelcontextprotocol/server-github"], env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}" } }] });
+    await app.waitFor("id:mcp-row-github");
+    await app.press("id:mcp-enabled-github");
+    await app.waitUntil(() => puts.length === 2);
+    expect(puts[1].mcp_servers[0].enabled).toBe(false);
+  });
+
+  test("settings signs a remote MCP server in once and out again", async () => {
+    const posts: { text: string; reply_to?: string }[] = [], puts: any[] = [], updates = { n: 0 };
+    let servers: { name: string; signed_in: boolean; renewable: boolean }[] = [];
+    const starts: any[] = [];
+    const app = await open("./App.tsx", { storage: STORAGE, width: 1200, height: 800, platform: "macos", network: {
+      ...server(posts, puts, updates),
+      [`GET ${URL}/api/mcp-oauth`]: () => ({ body: { servers } }),
+      [`POST ${URL}/api/mcp-oauth/start`]: (r: { body?: string | null }) => {
+        starts.push(JSON.parse(r.body!));
+        servers = [{ name: "linear", signed_in: true, renewable: true }]; // as if the browser finished at once
+        return { body: { url: "https://auth.example.com/authorize?state=x" } };
+      },
+      [`DELETE ${URL}/api/mcp-oauth?name=linear`]: () => { servers = []; return { body: { servers } }; },
+    } });
+    await app.press("id:user-menu");
+    await app.press("id:settings");
+    await app.press("id:settings-tab-mcp");
+    await app.press("id:mcp-new");
+    await app.waitFor("id:mcp-editor");
+    await app.type("id:mcp-name", "linear");
+    await app.press("text:Remote (HTTP)");
+    await app.type("id:mcp-url", "https://mcp.linear.app/mcp");
+    await app.press("id:mcp-save");
+    await app.waitUntil(() => puts.length === 1);
+    await app.press("id:mcp-signin-linear");
+    await app.waitUntil(() => starts.length === 1);
+    expect(starts[0]).toEqual({ name: "linear" });
+    await app.waitFor("id:mcp-signout-linear");
+    await app.press("id:mcp-signout-linear");
+    await app.waitFor("id:mcp-signin-linear");
+  });
+
+  test("settings adds, replaces and deletes shared keys without ever showing a value", async () => {
+    const posts: { text: string; reply_to?: string }[] = [], puts: any[] = [], updates = { n: 0 };
+    const sent: any[] = [];
+    let keys: { name: string; updated: string }[] = [];
+    const app = await open("./App.tsx", { storage: STORAGE, width: 1200, height: 800, platform: "macos", network: {
+      ...server(posts, puts, updates),
+      [`GET ${URL}/api/secrets`]: () => ({ body: { secrets: keys } }),
+      [`PUT ${URL}/api/secrets`]: (r: { body?: string | null }) => {
+        const b = JSON.parse(r.body!); sent.push(b);
+        keys = keys.filter((k) => k.name !== b.name);
+        if (b.value) keys.push({ name: b.name, updated: "2026-11-17T00:00:00Z" });
+        return { body: { secrets: keys } };
+      },
+    } });
+    await app.press("id:user-menu");
+    await app.press("id:settings");
+    await app.press("id:settings-tab-mcp");
+    await app.press("id:secret-new");
+    await app.waitFor("id:secret-editor");
+    await app.type("id:secret-name", "GITHUB_TOKEN");
+    await app.type("id:secret-value", "ghp_live_value");
+    await app.press("id:secret-save");
+    await app.waitUntil(() => sent.length === 1);
+    expect(sent[0]).toEqual({ name: "GITHUB_TOKEN", value: "ghp_live_value" });
+    await app.waitFor("id:secret-row-GITHUB_TOKEN");
+    expect(app.shows("text:ghp_live_value")).toBe(false);
+    await app.press("label:Replace key GITHUB_TOKEN");
+    expect(app.value("id:secret-value")).toBe("");
+    await app.press("id:secret-delete");
+    await app.waitUntil(() => sent.length === 2);
+    expect(sent[1]).toEqual({ name: "GITHUB_TOKEN", value: null });
+  });
 });
 
 
