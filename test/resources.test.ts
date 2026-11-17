@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { allowedParallel, busyShare, canRunHeavy, diskAlertDue, pressureOf, staleDerivedData } from "../src/resources";
+import { allowedParallel, busyShare, canRunHeavy, cleanupLine, diskAlertDue, pressureOf, staleDerivedData } from "../src/resources";
 
 test("busyShare measures the busy fraction of a CPU tick delta", () => {
   expect(busyShare(null, { idle: 100, total: 200 })).toBeNull(); // no baseline
@@ -77,4 +77,12 @@ test("diskAlertDue alerts once, then only after 6h or another 5GB drop", () => {
   expect(diskAlertDue({ at, freeGB: 51 }, at + 5.9 * 3600_000, 50)).toBe(false);
   expect(diskAlertDue({ at, freeGB: 51 }, at + 30 * 60_000, 46)).toBe(true); // worse by 5GB
   expect(diskAlertDue({ at, freeGB: 51 }, at + 6 * 3600_000, 51)).toBe(true); // reminder after 6h
+});
+
+// The grandchild of the alert bug above: a pass that frees nothing used to journal "nothing big" anyway, 26 times in
+// 8h while free space fell 23GB → 10GB, so the one line that mattered was buried.
+test("cleanupLine stays silent when a pass freed nothing", () => {
+  expect(cleanupLine(0, [], 10)).toBeNull();
+  expect(cleanupLine(80e6, [], 10)).toBeNull(); // noise floor
+  expect(cleanupLine(2.5e9, ["rust incremental caches: 2.5GB"], 43)).toBe("🧹 disk cleanup freed 2.5GB → 43GB free (rust incremental caches: 2.5GB)");
 });

@@ -259,6 +259,28 @@ export function diskAlertDue(prev: { at: number; freeGB: number }, now: number, 
   return now - prev.at >= everyMs || freeGB <= prev.freeGB - dropGB;
 }
 
+/** The journal line for one cleanup pass, or null when it freed nothing. A disk that stays low is the alert's job
+ *  (debounced to 6h / another 5GB); repeating "nothing big" every 30 min only buries the rest of the feed — observed
+ *  26 such lines in 8h while free space fell 23GB → 10GB. */
+export function cleanupLine(total: number, steps: string[], freeGB: number, minBytes = 1e8): string | null {
+  if (total <= minBytes) return null;
+  return `🧹 disk cleanup freed ${gb(total)}GB → ${freeGB}GB free (${steps.join("; ")})`;
+}
+
+/** Why a cleanup pass can free nothing while the disk keeps filling: the growth is in a repo the cleanup never looked
+ *  at. Naming it turns "needs your attention" into an action. */
+async function cleanupBlindSpot(cfg: Cfg): Promise<{ en: string; zh: string } | null> {
+  const dirs = (cfg.resources?.work_dirs ?? ["~/work"]).join(", ");
+  const scanned = workRepos(cfg);
+  if (scanned.length === 0) {
+    return { en: `no repo with target/ or node_modules/ under work_dirs (${dirs})`, zh: `work_dirs（${dirs}）下没有带 target/ 或 node_modules/ 的仓库` };
+  }
+  const caches = await Promise.all(scanned.filter((r) => existsSync(join(r, "target", "debug", "incremental")))
+    .map(async (r) => ({ p: `${r}/target/debug/incremental`, b: await sizeOf(join(r, "target", "debug", "incremental")) })));
+  const top = caches.sort((a, b) => b.b - a.b)[0];
+  return top ? { en: `biggest cache left alone is ${top.p} ${gb(top.b)}GB`, zh: `最大的一块缓存没动：${top.p} ${gb(top.b)}GB` } : null;
+}
+
 
 /** Runs tiered cleanup until disk is back above target. Returns a human summary or null if nothing needed. */
 export async function ensureDisk(cfg: Cfg, host: string, busyRepos: Set<string>, alert: (t: string) => Promise<unknown>) {
@@ -276,11 +298,15 @@ export async function ensureDisk(cfg: Cfg, host: string, busyRepos: Set<string>,
     s = sample(cfg);
     if (!low(s)) break;
   }
-  const msg = `🧹 disk cleanup freed ${gb(total)}GB → ${s.diskFreeGB}GB free (${lines.join("; ") || "nothing big"})`;
-  journal(host, msg);
+  const msg = cleanupLine(total, lines, s.diskFreeGB);
+  if (msg) journal(host, msg);
   if (low(s) && diskAlertDue(lastDiskAlert, Date.now(), s.diskFreeGB)) {
     lastDiskAlert = { at: Date.now(), freeGB: s.diskFreeGB };
-    await alert(L(`⚠️ ${host} is still low on disk: ${s.diskFreeGB}GB free (${s.diskFreePct}%) after automatic cleanup freed ${gb(total)}GB. Needs your attention.`, `⚠️ ${host} 磁盘仍不足：剩余 ${s.diskFreeGB}GB（${s.diskFreePct}%），自动清理已尽力（${gb(total)}GB）。需要你处理。`));
+    const why = await cleanupBlindSpot(cfg).catch(() => null);
+    await alert(L(`⚠️ ${host} is still low on disk: ${s.diskFreeGB}GB free (${s.diskFreePct}%) after automatic cleanup freed ${gb(total)}GB`
+      + `${why ? `; ${why.en}` : ""}. Needs your attention.`,
+      `⚠️ ${host} 磁盘仍不足：剩余 ${s.diskFreeGB}GB（${s.diskFreePct}%），自动清理腾出 ${gb(total)}GB`
+      + `${why ? `；${why.zh}` : ""}。需要你处理。`));
   }
   return msg;
 }
