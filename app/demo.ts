@@ -1,4 +1,4 @@
-// noop: the demo server. Entering "demo" as the server address (or "Try the demo" on the sign-in page) talks to this
+// noop: the demo server. Signing in as the test account (demo@noop.dev), or entering "demo" as the server address, talks to this
 // in-memory hub instead of a Worker: a small simulated team with a fleet, tasks, cards, channels and files. Nothing leaves
 // the device, so it serves App Store review, screenshots and UI work without anyone's real server.
 // `scripts/demo-server.ts` serves the same hub over HTTP and WebSocket for local development of the real network path.

@@ -171,15 +171,17 @@ describe("login", () => {
     expect(log.logouts).toBe(1);
     expect(app.storage()["hub.token"]).toBe(undefined);
   });
-  test("the iOS account menu leaves its menu content to UIKit", async () => {
+  test("the iOS account menu is the system sheet, and its settings row closes it", async () => {
     const app = await open("./App.tsx", { storage: STORAGE, network: hub([]), width: 390, height: 844, platform: "ios" });
     await app.press("label:Menu");
-    await app.waitFor("id:user-menu");
-    // This headless host has no UIKit button to activate. Verify only the
-    // app composition here; native opening and selection need an iOS host.
-    // NSH engine tests cover MenuButton native properties and selection events.
-    expect(app.shows("id:theme-dark")).toBe(false);
-    expect(app.shows("id:user-menu-avatar")).toBe(false);
+    await app.press("id:user-menu");
+    await app.waitFor("id:user-sheet");
+    expect(app.shows("id:user-menu-avatar")).toBe(true);
+    // The segmented controls are UIKit's, which this headless host does not draw; the simulator shows them.
+    expect(app.shows("Appearance")).toBe(true);
+    expect(app.shows("Language")).toBe(true);
+    await app.press("id:settings");
+    await app.waitUntil(() => !app.shows("id:user-sheet"));
   });
   for (const platform of ["android"] as const) {
     test(`the mobile account menu on ${platform} switches appearance and language`, async () => {

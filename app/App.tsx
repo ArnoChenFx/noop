@@ -88,6 +88,7 @@ import {
   Button,
   composerGlass,
   corner,
+  menuGlass,
   Count,
   glass,
   IconButton,
@@ -233,7 +234,7 @@ async function loadConfig(): Promise<Boot> {
   if (page.theme === "light" || page.theme === "dark") setColorScheme(page.theme);
   else {
     const saved = await Storage.getItem(KEYS.theme);
-    if (saved === "light" || saved === "dark") setColorScheme(saved);
+    if (saved === "light" || saved === "dark") { setColorScheme(saved); themePref.set(saved); }
   }
   const saved = await Storage.getItem(LANG_KEY);
   if (saved === "en" || saved === "zh") lang.set(saved);
@@ -453,11 +454,21 @@ function LangChoices() {
   );
 }
 
-function toggleTheme() {
-  const next = colorScheme() === "dark" ? "light" : "dark";
-  setColorScheme(next);
-  Storage.setItem(KEYS.theme, next);
+/** The appearance the user chose: the system's (the default), or one of its own. */
+type ThemePref = "system" | "light" | "dark";
+const themePref = signal<ThemePref>("system");
+function setTheme(pref: ThemePref) {
+  themePref.set(pref);
+  setColorScheme(pref);
+  if (pref === "system") Storage.removeItem(KEYS.theme);
+  else Storage.setItem(KEYS.theme, pref);
 }
+function toggleTheme() {
+  setTheme(colorScheme() === "dark" ? "light" : "dark");
+}
+/** The three appearances, for the iOS segmented controls (Auto first, as the system's own). */
+const THEME_PREFS: ThemePref[] = ["system", "light", "dark"];
+const themeTitle = (pref: ThemePref) => pref === "system" ? L("Auto", "自动") : pref === "light" ? L("Light", "浅色") : L("Dark", "深色");
 
 // ---------------------------------------------------------------- small pieces (the gallery's idioms)
 
@@ -2433,29 +2444,72 @@ function UserMenu(props: { hub: Hub; onSettings: () => void; reads: MessageReads
     <Text testID="user-account" style={{ flex: 1, fontSize: 13, fontWeight: "600", color: colors.text, numberOfLines: 1 }}>{account() || L("Account", "账户")}</Text>
     <Icon name="chevron-up" size={12} tint={colors.faint} />
   </>;
-  if (ios && MenuButton) {
-    /** The system menu's rows, as data: the same actions, language and appearance as the drawn menu's. */
-    const items = (): MenuButtonItem[] => [
-      { id: "mark-all-read", label: L("Mark all as read", "全部已读"), icon: "checkmark.circle", disabled: !props.reads.main().length },
-      { id: "settings", label: L("Settings…", "设置…"), icon: "gearshape" },
-      { id: "", label: L("Language", "语言"), icon: "globe", items: LANGS.map((l) => ({ id: `lang:${l.id}`, label: l.label, checked: lang() === l.id })) },
-      { id: "", label: L("Appearance", "外观"), inline: true, items: [
-        { id: "theme-light", label: L("Light", "浅色"), icon: "sun.max", checked: !isDark() },
-        { id: "theme-dark", label: L("Dark", "深色"), icon: "moon", checked: isDark() },
-      ] },
-    ];
-    const select = (id: string) => {
-      if (id === "mark-all-read") props.reads.all();
-      else if (id === "settings") props.onSettings();
-      else if (id.startsWith("lang:")) pickLang(id.slice("lang:".length));
-      else if ((id === "theme-dark") !== isDark() && id.startsWith("theme-")) toggleTheme();
-    };
+  if (ios) {
+    /** iOS: the system sheet, its rows in the grouped-list style of Settings. */
+    const open = signal(false);
+    /** The sheet's rows' height, which it rests at (an estimate until they are laid out). */
+    const height = signal(360);
+    /** Closes the sheet, then does what the row is for. */
+    const then = (work: () => void) => () => { open.set(false); work(); };
+    const icon = (name: IconName) => <Icon name={name} size={20} tint={colors.muted} />;
     return (
-      <View onTouchStartCapture={() => Keyboard.dismiss()} style={{ width: "100%" }}>
-        <MenuButton testID="user-menu" accessibilityLabel={menuLabel()} title={email()} items={items()} onSelect={({ id }) => select(id)} style={triggerStyle()}>
+      <>
+        <View role="button" testID="user-menu" accessibilityLabel={menuLabel()} onPress={() => { Keyboard.dismiss(); open.set(true); }} activeStyle={hovered()} style={triggerStyle()}>
           {triggerContent()}
-        </MenuButton>
-      </View>
+        </View>
+        {/* The system's own sheet (UIKit): as tall as its rows, with the grabber, and on iOS 26 its floating glass. */}
+        <Dialog
+          open={open()}
+          onOpenChange={({ open: o }) => open.set(o)}
+          presentation="pageSheet"
+          sheetHeight={height()}
+          sheetGrabber
+          accessibilityLabel={menuLabel()}
+        >
+          <View onLayout={({ bounds }) => height.set(Math.ceil(bounds.size.height))} style={{ gap: 22, paddingTop: 28, paddingBottom: 4 }}>
+            <View testID="user-sheet" style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 20, paddingTop: 4 }}>
+              {avatar(48, "user-menu-avatar")}
+              <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
+                <Text style={{ fontSize: 20, fontWeight: "600", color: colors.text, numberOfLines: 1 }}>{account() || L("Account", "账户")}</Text>
+                <If when={email()}>
+                  <Text style={{ fontSize: 14, color: colors.muted, numberOfLines: 1 }}>{email()}</Text>
+                </If>
+              </View>
+            </View>
+            <Section title={L("Appearance", "外观")} glass>
+              {SegmentedControl
+                ? <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                    <SegmentedControl testID="menu-appearance"
+                      items={THEME_PREFS.map((t) => ({ title: themeTitle(t) }))}
+                      selectedIndex={THEME_PREFS.indexOf(themePref())}
+                      onChange={({ index }) => setTheme(THEME_PREFS[index] ?? "system")} />
+                  </View>
+                // A runtime without the native control: the same choice as rows.
+                : <Choices label={L("Appearance", "外观")}
+                    choices={THEME_PREFS.map((t) => ({ id: t, label: themeTitle(t), testID: `theme-${t}` }))}
+                    selected={themePref()}
+                    onPick={(id) => setTheme(id as ThemePref)} />}
+            </Section>
+            <Section title={L("Language", "语言")} glass>
+              {SegmentedControl
+                ? <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
+                    <SegmentedControl testID="menu-language"
+                      items={LANGS.map((l) => ({ title: l.label }))}
+                      selectedIndex={Math.max(0, LANGS.findIndex((l) => l.id === lang()))}
+                      onChange={({ index }) => { const l = LANGS[index]; if (l && l.id !== lang()) pickLang(l.id); }} />
+                  </View>
+                : <Choices label={L("Language", "语言")}
+                    choices={LANGS.map((l) => ({ id: l.id, label: l.label, testID: `menu-lang-${l.id}` }))}
+                    selected={lang()}
+                    onPick={(id) => pickLang(id)} />}
+            </Section>
+            <Section glass>
+              <SetRow first label={L("Settings", "设置")} leading={icon("settings")} inset={48} chevron onPress={then(props.onSettings)} testID="settings" />
+              <SetRow label={L("Mark all as read", "全部已读")} leading={icon("check")} inset={48} disabled={!props.reads.main().length} onPress={then(props.reads.all)} testID="mark-all-read" />
+            </Section>
+          </View>
+        </Dialog>
+      </>
     );
   }
   return (
@@ -3177,13 +3231,15 @@ function notifyModel(push: Push, view: () => SettingsView | null, save: (patch: 
 }
 
 /** A grouped, inset section: a muted title above, rows on one rounded surface, a hint below. */
-function Section(props: { title?: string; hint?: string; testID?: string; children: JSX.Element }) {
+/** `glass`: on a glass sheet, a card that keeps the material's tint and its rows readable over what is behind. */
+function Section(props: { title?: string; hint?: string; testID?: string; glass?: boolean; children: JSX.Element }) {
   return (
     <View testID={props.testID} style={{ gap: 7 }}>
       <If when={props.title}>
         <Text style={{ paddingHorizontal: 32, fontSize: 13, color: colors.muted }}>{props.title}</Text>
       </If>
-      <View style={{ marginHorizontal: 16, borderRadius: radius.card, borderCurve: "continuous", borderWidth: 1, borderColor: surfaceEdge(), overflow: "hidden", backgroundColor: colors.surface }}>{props.children}</View>
+      <View style={{ marginHorizontal: 16, borderRadius: radius.card, borderCurve: "continuous", overflow: "hidden",
+        ...(props.glass ? { backgroundColor: alpha(colors.surface, 0.75) } : { borderWidth: 1, borderColor: surfaceEdge(), backgroundColor: colors.surface }) }}>{props.children}</View>
       <If when={props.hint}>
         <Text style={{ paddingHorizontal: 32, fontSize: 13, lineHeight: 18, color: colors.faint }}>{props.hint}</Text>
       </If>
@@ -3549,15 +3605,15 @@ function PhoneSettings(props: { hub: Hub; push: Push; settings: Settings; onOpen
           {SegmentedControl
             ? <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
                 <SegmentedControl testID="settings-appearance"
-                  items={[{ title: L("Light", "浅色") }, { title: L("Dark", "深色") }]}
-                  selectedIndex={isDark() ? 1 : 0}
-                  onChange={({ index }) => { if ((index === 1) !== isDark()) toggleTheme(); }} />
+                  items={THEME_PREFS.map((t) => ({ title: themeTitle(t) }))}
+                  selectedIndex={THEME_PREFS.indexOf(themePref())}
+                  onChange={({ index }) => setTheme(THEME_PREFS[index] ?? "system")} />
               </View>
             // A runtime without the native control: the same choice as rows, like the language above.
             : <Choices label={L("Appearance", "外观")}
-                choices={[{ id: "light", label: L("Light", "浅色"), testID: "settings-appearance-light" }, { id: "dark", label: L("Dark", "深色"), testID: "settings-appearance-dark" }]}
-                selected={isDark() ? "dark" : "light"}
-                onPick={(id) => { if ((id === "dark") !== isDark()) toggleTheme(); }} />}
+                choices={THEME_PREFS.map((t) => ({ id: t, label: themeTitle(t), testID: `settings-appearance-${t}` }))}
+                selected={themePref()}
+                onPick={(id) => setTheme(id as ThemePref)} />}
         </Section>
       </If>
       <Section title={L("Memory", "记忆")} hint={L("The rules the team works by, your preferences, member profiles and past decisions. Read-only.", "团队做事依据的规则、你的偏好、成员档案和决策先例。只读。")}>
@@ -5482,6 +5538,8 @@ function Login(props: { url: string; served: boolean; email: string; notice?: st
   const viaDemo = signal(false); // the demo server (address "demo"): any code works
   async function sendCode() {
     const e = email().trim();
+    // The test account (App Review): straight into the on-device demo, whatever the server.
+    if (!props.served && e.toLowerCase() === DEMO_EMAIL) return enterDemo();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return error.set(L("Enter a valid email address", "请填写有效的邮箱地址"));
     if (!server()) return error.set(L("Enter the server address", "请填写服务器地址"));
     busy.set(true);
@@ -5535,7 +5593,8 @@ function Login(props: { url: string; served: boolean; email: string; notice?: st
     }
   }
   /** The in-app demo server: a simulated team, nothing leaves the device (app/demo.ts). */
-  async function tryDemo() {
+  async function enterDemo() {
+    await Storage.setItem(KEYS.email, DEMO_EMAIL);
     await Storage.setItem(KEYS.url, DEMO_URL);
     await Storage.setItem(KEYS.token, DEMO_TOKEN);
     props.onLogin({ url: DEMO_URL, token: DEMO_TOKEN });
@@ -5648,14 +5707,6 @@ function Login(props: { url: string; served: boolean; email: string; notice?: st
               <Button testID="verify" label={busy() ? L("Signing in…", "登录中…") : L("Sign in", "登录")} variant="primary" loading={busy()} disabled={code().length !== CODE_LEN || totp().length !== 6} grow onPress={verify} />
             </If>
           </View>
-          <If when={!props.served && step() === "email"}>
-            <View style={{ flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 4 }}>
-              <Text style={{ fontSize: 14, color: colors.muted }}>{L("No Noop server yet?", "还没有 Noop 服务器？")}</Text>
-              <View role="button" testID="try-demo" accessibilityLabel={L("Try the demo", "试用演示")} onPress={tryDemo} hoverStyle={hovered()} style={{ height: 30, justifyContent: "center", paddingHorizontal: 6, borderRadius: 6 }}>
-                <Text style={{ fontSize: 14, fontWeight: "500", color: colors.accent }}>{L("Try the demo", "试用演示")}</Text>
-              </View>
-            </View>
-          </If>
         </View>
       </View>
     </Scroll>
