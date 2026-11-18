@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { checkpointFallback, checkpointRecoveryBody, due, recordRunLimit } from "../src/cli";
 import { matches, signature, type Cfg } from "../src/core";
 import { RUN_LIMIT, cliCommand, deadlinePrompt, parseResult, runAgent, runLimits, stripImages } from "../src/runner";
@@ -688,4 +689,38 @@ test("runsCheckHere: the host that parked a wait runs its check; the primary run
   expect(runsCheckHere(mac, "lb", true, "linux")).toBe(false); // macOS path: the primary can't answer it
   expect(runsCheckHere({ host_caps: "host:mbp", wait_check: "gh pr checks 1 -R o/r" }, "lb", true, "linux")).toBe(true);
   expect(runsCheckHere({ host_caps: "host:mbp", wait_check: "gh pr checks 1 -R o/r" }, "win", false, "linux")).toBe(false);
+});
+
+test("a prompt says when it cuts the start of a file", async () => {
+  const { readTail } = await import("../src/core");
+  const dir = mkdtempSync(join(tmpdir(), "noop-tail-"));
+  try {
+    const f = join(dir, "memory.md");
+    writeFileSync(f, "STANDING-RULES\n" + "x".repeat(100) + "\nnewest lesson\n");
+    expect(readTail(f, 1000)).toBe(readFileSync(f, "utf8")); // fits: untouched, no notice
+    const cut = readTail(f, 40);
+    expect(cut.split("\n")[0]).toContain(f); // the notice says where the rest is
+    expect(cut.split("\n")[0]).toContain("cut");
+    expect(cut.endsWith("newest lesson\n")).toBe(true); // the newest text is still there
+    expect(cut).not.toContain("STANDING-RULES");
+    expect(readTail(join(dir, "missing.md"))).toBe("");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("readAll names the files that no longer fit instead of dropping them silently", async () => {
+  const { readAll } = await import("../src/core");
+  const dir = mkdtempSync(join(tmpdir(), "noop-readall-"));
+  try {
+    writeFileSync(join(dir, "a-principles.md"), "A".repeat(300));
+    writeFileSync(join(dir, "b-focus.md"), "B".repeat(300));
+    writeFileSync(join(dir, "c-taste.md"), "C".repeat(300));
+    expect(readAll(dir, 5000)).not.toContain("cut to the last"); // fits: no notice
+    const out = readAll(dir, 400);
+    const first = out.split("\n")[0];
+    expect(first).toContain("not shown: a-principles.md");
+    expect(first).toContain("partly shown: b-focus.md");
+    expect(first).not.toContain("c-taste.md"); // fully shown
+    expect(out.endsWith("C".repeat(300))).toBe(true);
+    expect(out.length).toBeLessThan(400 + first.length + 2);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

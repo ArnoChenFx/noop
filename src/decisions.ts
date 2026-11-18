@@ -1,7 +1,7 @@
 // Decisions: agent asks → AI judge (owner's precedents & principles) → only unprecedented taste calls reach the owner.
 import { existsSync, unlinkSync, appendFileSync, writeFileSync } from "node:fs";
 import {
-  type Cfg, L, P, agentName, journal, list, newTask, nextId, now, precedents, readAll, readDoc, readIf, today, writeDoc,
+  type Cfg, L, P, agentName, journal, list, newTask, nextId, now, precedents, readAll, readDoc, readTail, today, writeDoc,
 } from "./core";
 import { notify } from "./notify";
 import { ask, type Result } from "./runner";
@@ -44,7 +44,7 @@ ${readAll(P("memory"))}
 ${readAll(P("policies"))}
 
 # Corrections the owner made to past judge rulings (highest priority)
-${readIf(P("memory", "judge-feedback.md"), 6000) || "(none)"}
+${readTail(P("memory", "judge-feedback.md"), 6000) || "(none)"}
 
 # Past decisions
 ${precedents(60) || "(none)"}

@@ -3,7 +3,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realp
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
-  type Cfg, HOME_DIR, L, P, ROOT, agentActivity, agentName, precedents, readAll, readIf, recentJournal, signature,
+  type Cfg, HOME_DIR, L, P, ROOT, agentActivity, agentName, precedents, readAll, readIf, readTail, recentJournal, signature,
 } from "./core";
 import { claudeDisallowed } from "./gates";
 import { channelPrompt } from "./channels";
@@ -85,10 +85,10 @@ The fleet coordinates through the shared hub folder at ${ROOT} (tasks/, journal/
 The hub folder is not a git repository: files you write there (reports/, memory) are synced to the cloud by the daemon after your run. Never git add/commit them, and never report a task as failed because the hub has no git metadata.
 
 # Your profile
-${readIf(P("agents", agent, "profile.md"))}
+${readTail(P("agents", agent, "profile.md"))}
 
 # Your memory
-${readIf(P("agents", agent, "memory.md"), 8000) || "(empty)"}
+${readTail(P("agents", agent, "memory.md"), 8000) || "(empty)"}
 
 # Fleet-wide policy
 ${readAll(P("policies"))}
