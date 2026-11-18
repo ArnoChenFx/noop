@@ -177,9 +177,9 @@ test("merged PRs wake a task once for acceptance checks instead of completing it
   const done = P("tasks", "done", `${id}.md`);
   try {
     writeDoc(waiting, { id, title: "Verify screenshot", waiting_on: "Need screenshot", wait_kind: "human", created: new Date(NOW).toISOString() }, "PR: https://github.com/huacnlee/noop/pull/182");
-    supervise({}, "test", NOW, () => "OPEN");
+    supervise({}, "test", NOW, () => "OPEN", () => false);
     expect(existsSync(waiting)).toBe(true);
-    supervise({}, "test", NOW, () => "MERGED");
+    supervise({}, "test", NOW, () => "MERGED", () => false);
     expect(existsSync(waiting)).toBe(false);
     expect(existsSync(done)).toBe(false);
     const resumed = readDoc(inbox);
@@ -187,7 +187,7 @@ test("merged PRs wake a task once for acceptance checks instead of completing it
     expect(resumed.body).toContain("Check remaining acceptance criteria");
     rmSync(inbox);
     writeDoc(waiting, { ...resumed.meta, waiting_on: "Need screenshot" }, resumed.body!);
-    supervise({}, "test", NOW, () => { throw new Error("Must not recheck a handled merge"); });
+    supervise({}, "test", NOW, () => { throw new Error("Must not recheck a handled merge"); }, () => false);
     expect(existsSync(waiting)).toBe(true);
     expect(existsSync(inbox)).toBe(false);
   } finally {
