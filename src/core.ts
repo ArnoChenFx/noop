@@ -428,8 +428,34 @@ export function remember(agent: string, lessons: string[] | undefined, source: s
 
 export const readIf = (p: string, tail = 12000) => (existsSync(p) ? readFileSync(p, "utf8").slice(-tail) : "");
 
-export const readAll = (dir: string, tail = 12000) =>
-  list(dir).map((p) => `### ${p.split("/").pop()}\n${readFileSync(p, "utf8").trim()}`).join("\n\n").slice(-tail);
+/** The last `tail` characters of a file, for a prompt. A cut start is announced: the opening of a file is usually where
+ *  its standing rules sit, and dropping it silently leaves the reader with no idea there is more to read. */
+export function readTail(p: string, tail = 12000): string {
+  if (!existsSync(p)) return "";
+  const s = readFileSync(p, "utf8");
+  if (s.length <= tail) return s;
+  return `[… the first ${s.length - tail} of ${s.length} characters are cut; read ${p} for them]\n${s.slice(-tail)}`;
+}
+
+/** Every .md of a folder, joined, last `tail` characters. The files that fall into the cut part are named, so a folder
+ *  that outgrows its budget does not lose whole files (the alphabetically first ones) without a trace. */
+export function readAll(dir: string, tail = 12000): string {
+  const parts = list(dir).map((p) => ({ name: basename(p), text: `### ${p.split("/").pop()}\n${readFileSync(p, "utf8").trim()}` }));
+  const joined = parts.map((x) => x.text).join("\n\n");
+  if (joined.length <= tail) return joined;
+  const cut = joined.length - tail;
+  const gone: string[] = [];
+  let partly = "";
+  let at = 0;
+  for (const x of parts) {
+    const end = at + x.text.length;
+    if (end <= cut) gone.push(x.name);
+    else if (at < cut) partly = x.name;
+    at = end + 2; // the blank line between two files
+  }
+  const note = `[… cut to the last ${tail} of ${joined.length} characters; not shown: ${gone.join(", ") || "none"}${partly ? `; partly shown: ${partly}` : ""}; read them in ${dir}]`;
+  return `${note}\n${joined.slice(-tail)}`;
+}
 
 export const recentJournal = (days = 2) =>
   list(P("journal")).slice(-days).map((p) => readFileSync(p, "utf8").slice(-4000)).join("\n");
