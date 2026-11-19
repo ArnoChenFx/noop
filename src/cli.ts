@@ -47,11 +47,18 @@ export function due(every: string, last: string | undefined, t = new Date()): bo
     return !lastT || +t - +lastT >= mins * 60_000;
   }
   const [h, m] = parts.at(-1)!.split(":").map(Number);
-  const target = new Date(t); target.setHours(h, m, 0, 0);
-  if (t < target) return false;
-  const dow = t.getDay();
-  if (parts[0] === "weekdays" && (dow === 0 || dow === 6)) return false;
-  if (parts[0] === "weekly" && ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][dow] !== parts[1].toUpperCase().slice(0, 3)) return false;
+  // Most recent slot at or before t, stepping back over days the schedule excludes.
+  // A machine asleep at 19:00 used to skip that day's routine entirely: `target` was
+  // allowed to move forward with the clock, so the next tick (say 03:00) saw today's
+  // 19:00 still in the future and returned false for the whole day. Catch up instead.
+  let target = new Date(t); target.setHours(h, m, 0, 0);
+  if (t < target) target = new Date(+target - 24 * 60 * 60_000);
+  const onSchedule = (d: Date) => {
+    if (parts[0] === "weekdays") return d.getDay() !== 0 && d.getDay() !== 6;
+    if (parts[0] === "weekly") return ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"][d.getDay()] === parts[1].toUpperCase().slice(0, 3);
+    return true;
+  };
+  for (let i = 0; i < 7 && !onSchedule(target); i++) target = new Date(+target - 24 * 60 * 60_000);
   if (!lastT) return +t - +target < 60 * 60_000; // first run ever: only fire near the scheduled time
   return lastT < target;
 }

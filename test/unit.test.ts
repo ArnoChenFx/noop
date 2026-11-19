@@ -18,6 +18,19 @@ test("routine schedule", () => {
   expect(due("daily 02:30", undefined, t)).toBe(false); // first run long after slot → wait for next slot
 });
 
+test("routine schedule catches up a slot missed while the machine slept", () => {
+  // Ran yesterday 19:00, tick at 03:00 before today's slot → nothing due yet.
+  expect(due("daily 19:00", "2026-11-17T19:00:00", new Date("2026-11-18T03:00:00"))).toBe(false);
+  // Missed yesterday 19:00 entirely (asleep), tick at 03:00 → fire yesterday's slot now.
+  expect(due("daily 19:00", "2026-11-16T19:00:00", new Date("2026-11-18T03:00:00"))).toBe(true);
+  // Weekday routine missed on Friday fires on Saturday morning.
+  expect(due("weekdays 19:00", "2026-11-12T19:00:00", new Date("2026-11-14T10:00:00"))).toBe(true);
+  // Weekly Sunday routine missed fires on Monday.
+  expect(due("weekly SUN 21:00", "2026-11-08T21:00:00", new Date("2026-11-16T08:00:00"))).toBe(true);
+  // ...but not a second time once it has caught up.
+  expect(due("daily 19:00", "2026-11-18T03:00:00", new Date("2026-11-18T03:05:00"))).toBe(false);
+});
+
 test("capability matching", () => {
   const caps = ["os:linux", "host:pc", "gpu"];
   expect(matches({ requires: "os:linux" }, caps)).toBe(true);
