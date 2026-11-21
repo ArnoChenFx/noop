@@ -333,3 +333,24 @@ test("built-in routines: every config has security-check (read-only, each machin
   expect(r[0].builtin).toBeUndefined();
   rmSync(P("config.toml"));
 });
+
+test("a routine whose copies wait for approval is reported, not silently dead", () => {
+  // onboarding lets evolve/daily-report/learn/idle copy run; anything else is batched for the owner
+  const first = ago(600);
+  task("proposed", "T-0031", "routine:weekly-report", first);
+  task("proposed", "T-0032", "routine:weekly-report", ago(120));
+  task("proposed", "T-0033", "routine:evolve");      // allowed → not waiting on the owner
+  task("proposed", "T-0034", "followup");            // not a routine copy
+  const out = A.routinesAwaitingApproval(cfg);
+  expect(out.map((r) => r.name)).toEqual(["weekly-report"]);
+  expect(out[0].copies).toEqual(["T-0031", "T-0032"]);
+  expect(out[0].since).toBe(first); // oldest copy, so the owner sees how long it has been dead
+});
+
+test("a read-only or auto routine is never reported as waiting for approval", () => {
+  task("proposed", "T-0041", "routine:uptime-watch"); // readonly = true in cfg
+  task("proposed", "T-0042", "routine:uptime-watch");
+  expect(A.routinesAwaitingApproval(cfg)).toEqual([]);
+  const auto = { autonomy: { level: "onboarding", auto_routines: ["uptime-watch"] }, routine: cfg.routine };
+  expect(A.routinesAwaitingApproval(auto)).toEqual([]);
+});

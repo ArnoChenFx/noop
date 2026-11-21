@@ -1,7 +1,7 @@
 // Fleet metrics → fleet/metrics.json; the architect uses them to evolve prompts, rules and memory.
 import { mkdirSync, writeFileSync } from "node:fs";
-import { CODE, P, list, readDoc } from "./core";
-import { judgeAccuracy } from "./autonomy";
+import { CODE, P, list, loadConfig, readDoc } from "./core";
+import { judgeAccuracy, routinesAwaitingApproval } from "./autonomy";
 
 // Which code produced these numbers. Twice now a host reported a healthy fleet while the daemon was still running a
 // checkout pinned 20+ commits back by local edits, so every fix merged upstream was inert there and every figure below
@@ -52,6 +52,8 @@ export function computeMetrics(days = 7) {
   const out = {
     shadow_judge: judgeAccuracy(),
     shadow_judge_by_agent: Object.fromEntries(Object.keys(per).map((a) => [a, judgeAccuracy(a)])), proposal_batches: approvals.length, proposals_rejected_total: rejected,
+    // A routine that fires on schedule but whose copies wait for approval produces nothing; nothing else reports it.
+    routines_starved: routinesAwaitingApproval(loadConfig()),
     window_days: days, generated: new Date().toISOString(), code: codeState(), agents,
     decisions: { total: decisions.length, open: openCards.length,
       oldest_open_days: openAges.length ? Math.round((Date.now() - Math.min(...openAges)) / 86400e3) : 0, by_judge: byWho(/^judge/), by_owner: byWho(/^owner\(/), owner_overrides_of_judge: byWho(/override/),

@@ -29,7 +29,7 @@ import { addFollowUp, reopenTask, routeWithoutModel, type BrainOut, ClaudeModel,
 import { isWrite, runTool } from "../cloud/src/tools";
 import { cloudDeploy, startCloudBridge } from "./cloud";
 import { adoptCloudUrl, readHubToml } from "./sync";
-import { judgeAccuracy, level, needsApproval, noteStuckRoutine, proposeBatch, resolveProposals, routineParkedOnDecision, routineQueued, supersedeProposed } from "./autonomy";
+import { judgeAccuracy, level, needsApproval, noteStuckRoutine, proposeBatch, resolveProposals, routineParkedOnDecision, routineQueued, routinesAwaitingApproval, supersedeProposed } from "./autonomy";
 import { CODE, L, UPDATE_REQUEST, type UpdateState, setUpdateState, updateState, allowedClis, cliHintPatch, fleetClis, capOk, idTagFor, isPrimary, isCloudDeployHost, runningRev, setApprovalGate, setIdTag } from "./core";
 import { accountEnv, accountsStatus, classify, failoverAccount, pendingLoginIds, pickAccount, reportFailure, retryLogins, submitLoginCode } from "./accounts";
 import { channelPrompt, channels, resolveChannels, updateChannel } from "./channels";
@@ -1090,6 +1090,11 @@ async function status(cfg: Cfg, brief = false) {
       const m = readDoc(p).meta;
       console.log(`  ${m.id} [${m.agent}] ${m.title}${m.claimed_by ? ` @${m.claimed_by}` : ""}${m.requires ? ` (needs ${m.requires})` : ""}`);
     }
+  }
+  const starved = routinesAwaitingApproval(cfg);
+  if (starved.length) {
+    console.log("\nroutines waiting for your approval");
+    for (const r of starved) console.log(`  ${r.name}: ${r.copies.join(", ")} waiting since ${r.since.slice(0, 16).replace("T", " ")} — it fires on schedule but cannot start until you answer; set readonly = true or answer the batch`);
   }
   console.log("\nopen decisions");
   for (const p of list(P("decisions", "open"))) {
