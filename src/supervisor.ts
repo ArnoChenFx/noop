@@ -16,7 +16,7 @@ export type Ctx = {
   maxWakes: number;
   decision: (id: string) => "open" | "closed" | undefined;
 };
-export type Action = "resume" | "reroute" | "repin" | "requeue" | "escalate" | "none";
+export type Action = "resume" | "reroute" | "repin" | "requeue" | "escalate" | "park" | "none";
 export type Verdict = { id: string; cause: string; reasons: string[]; action: Action; requires?: string };
 
 const reqs = (m: Meta) => (m.requires ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -51,6 +51,12 @@ export function classify(t: Task, ctx: Ctx): Verdict | null {
     return v(`host:${gone}`, "escalate", [L(`pinned host ${gone} is retired and no other online host meets ${rest.join(",") || "the requirements"}`, `绑定的主机 ${gone} 已停用，且没有其他在线主机满足 ${rest.join(",") || "要求"}`)]);
   }
   // 2. blocked on a card that is already closed → the answer never reached it (unless the task already resumed on it)
+  //    A next-steps menu is the exception: nobody answers it into the task (the owner's pick resumes it through
+  //    closeDecision), so a closed card behind it means a newer menu replaced it. Waking it only drafts another card
+  //    on top of that newer one: on 2026-11-19 two idle menu tasks ping-ponged this way for 14 hours (D-0009…D-0024,
+  //    17 cards, 0 answered). Park it instead.
+  if (t.folder === "blocked" && m.kind === "menu" && m.decision && ctx.decision(m.decision) === "closed")
+    return v(`menu:${m.decision}`, "park", [L(`its menu card ${m.decision} was replaced by a newer one`, `它的菜单卡 ${m.decision} 已被新菜单顶替`)]);
   if (t.folder === "blocked" && m.decision && m.resumes !== m.decision && ctx.decision(m.decision) === "closed") return v(`answered:${m.decision}`, "resume", [L(`${m.decision} was answered but the task did not continue`, `${m.decision} 已回答但任务没有继续`)]);
   if (t.folder === "blocked" && m.decision && ctx.decision(m.decision) === "open") return null; // the owner has the card
   // 2b. parked on the owner: a human wait is a state, not a stall. waits.ts gives it no deadline and no timer, so a
@@ -180,7 +186,7 @@ export function supervise(cfg: Cfg, host: string, t = Date.now(), readPrState = 
   const tasks: (Task & { path: string })[] = (["waiting", "blocked"] as const).flatMap((folder) =>
     list(P("tasks", folder), /^T-.*\.md$/).map((path) => ({ path, folder, ...readDoc(path) })));
   const verdicts: Verdict[] = [];
-  const counts = { reroute: 0, resume: 0, requeue: 0, cards: 0, merged: 0 };
+  const counts = { reroute: 0, resume: 0, requeue: 0, cards: 0, merged: 0, parked: 0 };
   let merged = 0;
   for (const task of [...tasks]) { // Wake once per merged PR set, preserving any unfinished acceptance work.
     const prs = trackedPrs(task.meta, task.body);
@@ -235,6 +241,11 @@ export function supervise(cfg: Cfg, host: string, t = Date.now(), readPrState = 
     } else if (v.action === "repin") {
       writeDoc(task.path, { ...meta, host: "any", requires: v.requires || undefined }, body ?? "");
       journal(host, L(`🧭 supervisor: ${meta.id} unpinned from a retired host`, `🧭 supervisor: ${meta.id} 去掉已停用主机的绑定`)); counts.reroute++;
+    } else if (v.action === "park") {
+      writeDoc(P("tasks", "rejected", `${meta.id}.md`), { ...meta, approval: `superseded:${meta.decision}` },
+        `${body ?? ""}\n\n> Supervisor (${now()}): ${v.reasons.join("; ")}; a resumed run would only re-ask. Parked here so the idle loop cannot reopen it.\n`);
+      unlinkSync(task.path);
+      journal(host, L(`🧭 supervisor: ${meta.id} parked (menu ${meta.decision} was replaced)`, `🧭 supervisor: ${meta.id} 归档（菜单 ${meta.decision} 已被顶替）`)); counts.parked++;
     } else if (v.action === "resume") {
       back({ resumed: "yes", resumes: meta.decision }, `${v.reasons.join("; ")}. Read ${meta.decision}'s answer in decisions/closed and continue accordingly.`);
       journal(host, L(`🧭 supervisor: ${meta.id} resumed (${v.reasons.join("; ")})`, `🧭 supervisor: ${meta.id} 继续（${v.reasons.join("；")}）`)); counts.resume++;
@@ -265,6 +276,6 @@ export function supervise(cfg: Cfg, host: string, t = Date.now(), readPrState = 
     cards.push({ supervisor_cause: cause, tasks: fresh.join(",") });
   }
   counts.merged = merged;
-  journal(host, `🧭 supervisor ran: resumed ${merged} with merged PRs, ${tasks.length} waiting/blocked, rerouted ${counts.reroute}, resumed ${counts.resume}, requeued ${counts.requeue}, cards ${counts.cards}`);
+  journal(host, `🧭 supervisor ran: resumed ${merged} with merged PRs, ${tasks.length} waiting/blocked, rerouted ${counts.reroute}, resumed ${counts.resume}, requeued ${counts.requeue}, parked ${counts.parked}, cards ${counts.cards}`);
   return counts;
 }

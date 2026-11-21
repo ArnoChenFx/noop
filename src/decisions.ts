@@ -8,6 +8,28 @@ import { ask, type Result } from "./runner";
 import { judgeMayDecide } from "./autonomy";
 import { isMergeCard, mergeHeadline } from "./waits";
 
+/** A refreshed next-steps menu replaces the older unanswered one: the old card no longer says what the fleet
+ *  would ask today. Its idle task is parked in tasks/rejected so the blocked queue does not grow one dead task
+ *  per refresh. */
+function supersedeOlderMenus(newTaskId: string, keep: string) {
+  for (const p of list(P("decisions", "open"))) {
+    const { meta, body } = readDoc(p);
+    if (meta.kind !== "menu" || meta.id === keep) continue;
+    writeDoc(P("decisions", "closed", `${meta.id}.md`),
+      { ...meta, answer: "superseded (refreshed)", answered_by: "system", answered: now() },
+      `${body}\n## Answer (system)\nsuperseded (refreshed): replaced by the menu ${newTaskId} raises; its options are stale.\n`);
+    unlinkSync(p);
+    for (const old of cardTasks(meta)) {
+      const t = P("tasks", "blocked", `${old}.md`);
+      if (old === newTaskId || !existsSync(t)) continue;
+      const { meta: tm, body: tb } = readDoc(t);
+      writeDoc(P("tasks", "rejected", `${old}.md`), { ...tm, approval: `superseded:${newTaskId}` },
+        `${tb}\n\n## Note\nsuperseded by ${newTaskId}: a newer next-steps menu replaced this one.\n`);
+      unlinkSync(t);
+    }
+  }
+}
+
 export function openDecision(task: Record<string, string>, res: Result, host: string): string {
   const opts = res.options?.length ? res.options : ["A: approve", "B: reject"];
   // One task, one card. A task that asks again (a resumed run, a re-plan, a judge send-back) used to open a
@@ -15,6 +37,9 @@ export function openDecision(task: Record<string, string>, res: Result, host: st
   // owner's list grew a duplicate nobody could tell apart from the real one. Refresh the open card instead.
   const prior = list(P("decisions", "open")).map((p) => readDoc(p).meta).find((m) => m.task && m.task === task.id);
   const id = prior?.id ?? nextId("D", P("decisions"));
+  // A menu asks from a new idle task each round, so the per-task refresh above never fires: on 2026-11-19 five
+  // menu cards (D-0003…D-0007) sat open at once, all asking "what next?", with five blocked tasks behind them.
+  if (task.kind === "menu") supersedeOlderMenus(task.id, id);
   writeDoc(P("decisions", "open", `${id}.md`), {
     id, task: task.id, agent: task.agent, host, created: prior?.created ?? now(),
     question: res.question ?? "", recommendation: res.recommendation ?? "", options: opts.join(" | "),
