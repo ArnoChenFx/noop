@@ -4,11 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkpointFallback, checkpointRecoveryBody, due, recordRunLimit } from "../src/cli";
 import { matches, signature, type Cfg } from "../src/core";
+import { dirtyPaths } from "../src/setup";
 import { RUN_LIMIT, cliCommand, deadlinePrompt, parseResult, runAgent, runLimits, stripImages } from "../src/runner";
 import { tooManyWakes } from "../src/waits";
 
-test("routine schedule", () => {
-  const t = new Date("2026-11-02T19:05:00"); // Monday
+test("dirtyPaths keeps every path intact, including the first line", () => {
+  // the first line of `git status --porcelain` for an unstaged edit starts with a space
+  expect(dirtyPaths(" M src/accounts.ts\nA  src/new.ts\nR  old.ts -> new.ts\n?? docs/x.md\n")).toEqual([
+    "src/accounts.ts", "src/new.ts", "old.ts -> new.ts", "docs/x.md",
+  ]);
+  expect(dirtyPaths("")).toEqual([]);
+});
+
+test("routine schedule", () => {  const t = new Date("2026-11-02T19:05:00"); // Monday
   expect(due("15m", undefined, t)).toBe(true);
   expect(due("15m", new Date(+t - 5 * 60e3).toISOString(), t)).toBe(false);
   expect(due("weekdays 19:00", undefined, t)).toBe(true);
