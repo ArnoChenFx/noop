@@ -334,6 +334,12 @@ export function heartbeat(cfg: Cfg, busy: number, stats?: unknown) {
   writeFileSync(f, JSON.stringify({ host, caps: hostCaps(cfg), seen: now(), busy, version: "1", stats, ...runningRev(), update: updateState(), activity: agentActivity.size ? Object.fromEntries(agentActivity) : undefined } satisfies HostBeat, null, 2));
 }
 
+/** Caps of every machine that has ever written a heartbeat. Offline hosts stay listed, so a routine pinned to a
+ *  capability only they have (a Linux build host that is asleep) is not mistaken for one nobody can satisfy. */
+export function knownHostCaps(): string[][] {
+  return list(P("fleet", "hosts"), /\.json$/).map((p) => (JSON.parse(readFileSync(p, "utf8")) as HostBeat).caps ?? []);
+}
+
 export function onlineHosts(cfg: Cfg): HostBeat[] {
   // heartbeats go up lazily (LAZY_PUSH_MS), so a shorter window would flap machines offline
   const staleMs = Math.max(cfg.fleet?.offline_after_minutes ?? 0, OFFLINE_AFTER_MINUTES) * 60_000;

@@ -30,7 +30,7 @@ import { isWrite, runTool } from "../cloud/src/tools";
 import { cloudDeploy, startCloudBridge } from "./cloud";
 import { adoptCloudUrl, readHubToml } from "./sync";
 import { judgeAccuracy, level, needsApproval, noteStuckRoutine, proposeBatch, resolveProposals, routineParkedOnDecision, routineQueued, routinesAwaitingApproval, supersedeProposed } from "./autonomy";
-import { CODE, L, UPDATE_REQUEST, type UpdateState, setUpdateState, updateState, allowedClis, cliHintPatch, fleetClis, capOk, idTagFor, isPrimary, isCloudDeployHost, runningRev, setApprovalGate, setIdTag } from "./core";
+import { CODE, L, UPDATE_REQUEST, type UpdateState, setUpdateState, updateState, allowedClis, cliHintPatch, fleetClis, capOk, idTagFor, isPrimary, isCloudDeployHost, knownHostCaps, runningRev, setApprovalGate, setIdTag } from "./core";
 import { accountEnv, accountsStatus, classify, failoverAccount, pendingLoginIds, pickAccount, reportFailure, retryLogins, submitLoginCode } from "./accounts";
 import { channelPrompt, channels, resolveChannels, updateChannel } from "./channels";
 import { shellBash } from "./shell";
@@ -74,6 +74,15 @@ export function signalChanged(r: { name: string; signal?: string }, state: Recor
   if (state[key] === hash) return false;
   state[key] = hash;
   return true;
+}
+
+/** The first requirement no known host satisfies, or "" when some machine could still run it. A routine pinned to
+ *  a capability the fleet does not have (pr-review requires os:linux; this fleet is macOS-only) used to mint a copy
+ *  every interval that no host could claim, each run superseding the last: 4 files a day into tasks/rejected, and the
+ *  agent never ran once. With no heartbeats at all the fleet cannot judge, so the scheduler keeps parking it. */
+export function unrunnableReason(reqs: string[], hostCapsList: string[][]): string {
+  if (!hostCapsList.length) return "";
+  return reqs.find((r) => !hostCapsList.some((caps) => capOk(r, caps))) ?? "";
 }
 
 function runRoutines(cfg: Cfg, host: string, primary: boolean) {
@@ -120,6 +129,17 @@ function runRoutines(cfg: Cfg, host: string, primary: boolean) {
       if (state[key] !== parked) {
         state[key] = parked;
         journal(host, `⏰ routine \`${r.name}\` skipped: ${parked} waits on the owner's answer`);
+      }
+      continue;
+    }
+    // A routine no machine can run must not manufacture copies: say it once, then stay quiet until the fleet changes.
+    const fit = unrunnableReason([r.requires ?? "", pin ? `host:${pin}` : ""].join(",").split(",").map((s) => s.trim()).filter(Boolean), [hostCaps(cfg), ...knownHostCaps()]);
+    if (fit) {
+      state[r.name] = new Date().toISOString();
+      const key = `${r.name}#unrunnable`;
+      if (state[key] !== fit) {
+        state[key] = fit;
+        journal(host, `⏰ routine \`${r.name}\` skipped: no known host has ${fit}`);
       }
       continue;
     }
