@@ -26,6 +26,11 @@ export function needsApproval(cfg: Cfg, source: string): boolean {
 const QUEUED = ["inbox", "active", "waiting", "blocked"];
 const isRoutine = (m: Record<string, string>, name: string) => (m.source ?? "").replace(/^approved:/, "") === `routine:${name}`;
 
+/** A copy parked by the work-limit checkpoint (src/cli.ts checkpointFallback): its pass is NOT finished — the daemon
+ *  resumes it — so it must keep blocking a fresh copy, or the resumed run races one minted meanwhile. */
+const isCheckpointWait = (m: Record<string, string>) =>
+  m.wait_kind === "ci" && (m.waiting_on ?? "").startsWith("checkpoint saved after the work limit");
+
 /** Id of a copy of this routine that is queued or running (so a new run would be redundant), else "".
  *  `host`: a per-machine routine (scheduler "each") only counts its own machine's copies. */
 export function routineQueued(name: string, host?: string): string {
@@ -33,8 +38,9 @@ export function routineQueued(name: string, host?: string): string {
     const m = readDoc(p).meta;
     if (!isRoutine(m, name) || (host && m.host !== host)) continue;
     // a copy parked on something slow (CI, the owner clicking merge) has finished its pass: the next run must still
-    // pick up new PRs/issues instead of the backlog piling up behind it
-    if (s === "waiting" || s === "blocked") continue;
+    // pick up new PRs/issues instead of the backlog piling up behind it. A work-limit checkpoint is the exception:
+    // it resumes, so minting now gives the same routine two concurrent runs (T-2270 + T-2274, 2026-11-21).
+    if ((s === "waiting" || s === "blocked") && !isCheckpointWait(m)) continue;
     return m.id;
   }
   return "";

@@ -197,6 +197,19 @@ test("routine dedupe: parked (waiting/blocked) copies never block the next run",
   expect(A.routineQueued("parked")).toBe("");
 });
 
+test("routine dedupe: a checkpointed copy that will resume still blocks the next run", () => {
+  // the work-limit checkpoint parks the copy in tasks/waiting, but its pass is not finished: the daemon resumes it,
+  // so a copy minted in the meantime runs the same routine twice (T-2270 + T-2274, 2026-11-21)
+  writeDoc(P("tasks", "waiting", "T-0111.md"), {
+    id: "T-0111", source: "routine:triage-inbound", wait_kind: "ci", wait_minutes: "5",
+    waiting_on: "checkpoint saved after the work limit; resume T-0111 from /tmp/T-0111.log",
+  }, "");
+  expect(A.routineQueued("triage-inbound")).toBe("T-0111");
+  // an ordinary wait on CI has finished its pass and must not hold the next run back
+  writeDoc(P("tasks", "waiting", "T-0112.md"), { id: "T-0112", source: "routine:own-prs-ci", wait_kind: "ci", waiting_on: "CI run 123" }, "");
+  expect(A.routineQueued("own-prs-ci")).toBe("");
+});
+
 test("a copy parked on an unanswered decision is found only while that decision is open", () => {
   writeDoc(P("decisions", "open", "D-0004.md"), { id: "D-0004", question: "告警源？" }, "x");
   writeDoc(P("tasks", "waiting", "T-0201.md"), {
