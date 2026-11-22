@@ -470,8 +470,10 @@ export function readAll(dir: string, tail = 12000): string {
   return `${note}\n${joined.slice(-tail)}`;
 }
 
+/** The hub's daily journal files; agents may leave other notes in journal/ that sort after them by name. */
+export const JOURNAL_DAY = /^\d{4}-\d{2}-\d{2}\.md$/;
 export const recentJournal = (days = 2) =>
-  list(P("journal")).slice(-days).map((p) => readFileSync(p, "utf8").slice(-4000)).join("\n");
+  list(P("journal"), JOURNAL_DAY).slice(-days).map((p) => readFileSync(p, "utf8").slice(-4000)).join("\n");
 
 export function precedents(n = 30): string {
   // the latest answers, not the last file names: by name every P-… batch and D-C… card sorts after every D-0… card
