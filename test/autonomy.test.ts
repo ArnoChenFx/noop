@@ -353,10 +353,19 @@ test("a routine whose copies wait for approval is reported, not silently dead", 
   task("proposed", "T-0032", "routine:weekly-report", ago(120));
   task("proposed", "T-0033", "routine:evolve");      // allowed → not waiting on the owner
   task("proposed", "T-0034", "followup");            // not a routine copy
-  const out = A.routinesAwaitingApproval(cfg);
+  const out = A.routinesAwaitingApproval({ ...cfg, routine: [...cfg.routine, { name: "weekly-report" }] });
   expect(out.map((r) => r.name)).toEqual(["weekly-report"]);
   expect(out[0].copies).toEqual(["T-0031", "T-0032"]);
   expect(out[0].since).toBe(first); // oldest copy, so the owner sees how long it has been dead
+});
+
+test("a copy whose routine was removed from config.toml is a leftover, not a routine waiting on the owner", () => {
+  // the owner deleted workflow-coach from config.toml; its old copy stays in tasks/proposed and nothing can approve it
+  task("proposed", "T-0051", "routine:workflow-coach", ago(2880));
+  expect(A.routinesAwaitingApproval(cfg)).toEqual([]);
+  // the same copy under a config that still declares the routine is reported again
+  const kept = { ...cfg, routine: [...cfg.routine, { name: "workflow-coach" }] };
+  expect(A.routinesAwaitingApproval(kept).map((r) => r.copies)).toEqual([["T-0051"]]);
 });
 
 test("a read-only or auto routine is never reported as waiting for approval", () => {

@@ -93,6 +93,9 @@ export function routinesAwaitingApproval(cfg: Cfg): { name: string; copies: stri
     const source = m.source ?? "";
     const name = source.match(/^routine:(.+)$/)?.[1];
     if (!name || !needsApproval(cfg, source)) continue; // runs without approval, or not a routine copy
+    // The routine itself may have been removed from config.toml (its copies then sit in tasks/proposed for good).
+    // Nothing will ever mint or approve it again, so it is a leftover, not a routine waiting on the owner.
+    if (!(cfg.routine ?? []).some((r: any) => r.name === name)) continue;
     const created = Date.parse(m.created ?? "");
     const e = out.get(name) ?? { name, copies: [], since: Number.isNaN(created) ? Date.now() : created };
     e.copies.push(m.id);
