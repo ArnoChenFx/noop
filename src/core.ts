@@ -361,10 +361,17 @@ function yieldToPreferred(meta: Record<string, string>, caps: string[], cfg: Cfg
 /** A host's CPU pressure as its heartbeat reports it (0-1): measured utilisation when known, else load/cores. */
 const heartPressure = (s: any): number => (s?.cpuBusyPct == null ? (s?.loadRatio ?? 0) : s.cpuBusyPct / 100);
 
-/** Heavy work goes to the least-loaded capable online host. */
+/** Heavy work goes to the least-loaded capable online host. When no host has heavy headroom the copy waits forever
+ *  and nothing says so: evolve-deep T-0032 sat 9h behind the 25% free-memory gate on the only online host, which sat
+ *  at 17% of 24 GB. Like yieldToPreferred, that gate lapses after `heavy_wait_minutes` — memory only: the CPU side
+ *  still holds, and allowedParallel already refuses to dispatch anything below the hard memory floor. */
 function yieldHeavy(meta: Record<string, string>, cfg: Cfg, myLoad: number, heavyOk: boolean): boolean {
   if (meta.weight !== "heavy") return false;
-  if (!heavyOk) return true;
+  if (!heavyOk) {
+    const created = Date.parse(meta.created ?? "");
+    if (Number.isNaN(created) || Date.now() - created < (cfg.resources?.heavy_wait_minutes ?? 60) * 60_000) return true;
+    return myLoad >= (cfg.resources?.heavy_max_load ?? 0.5); // never start heavy work on a saturated host
+  }
   const me = hostName(cfg);
   return onlineHosts(cfg).some((h) => h.host !== me && matches(meta, h.caps) && h.stats
     && heartPressure(h.stats) + 0.2 < myLoad && h.busy === 0);

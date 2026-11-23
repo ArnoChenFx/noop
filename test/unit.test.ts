@@ -325,6 +325,22 @@ test("pickTask: a task no machine here can run (needs another OS) never holds ba
   expect(picked).toContain("T-9002");
 });
 
+test("pickTask: a heavy task no host has headroom for starts after heavy_wait_minutes, never on a saturated host", async () => {
+  const { pickTask, writeDoc, P } = await import("../src/core");
+  const cfg = { clis: { default: ["claude", "codex"] } } as any;
+  const now = new Date().toISOString();
+  const old = new Date(Date.now() - 2 * 3600_000).toISOString();
+  // heavyOk=false everywhere here: no host reports heavy headroom (the evolve-deep case: memory under 25%)
+  writeDoc(P("tasks", "inbox", "T-9011.md"), { id: "T-9011", title: "heavy, waited 2h", agent: "lead", weight: "heavy", priority: "urgent", planned: now, created: old }, "x");
+  writeDoc(P("tasks", "inbox", "T-9013.md"), { id: "T-9013", title: "heavy, just queued", agent: "lead", weight: "heavy", priority: "urgent", planned: now, created: now }, "y");
+  if (!Bun.which("claude") && !Bun.which("codex")) return; // no AI CLI here: nothing is pickable
+  expect(pickTask(cfg, 0.2, false)).toContain("T-9011"); // waited long enough: the gate lapses, the fresh copy still waits
+  expect(pickTask(cfg, 0.95, false) ?? "").not.toContain("T-9011"); // saturated host: still no heavy work
+  rmSync(P("tasks", "inbox", "T-9011.md"));
+  expect(pickTask(cfg, 0.2, false) ?? "").not.toContain("T-9013");
+  rmSync(P("tasks", "inbox", "T-9013.md"));
+});
+
 test("a reply to an agent's message goes to the brain with that task, never as an amendment of the last decision", async () => {
   const { handleOwnerMessage, setOwnerTask, pendingInbound, ackInbound } = await import("../src/server");
   const calls: [string, { reply?: string; answered?: string }][] = [];
