@@ -29,7 +29,7 @@ import { addFollowUp, reopenTask, routeWithoutModel, type BrainOut, ClaudeModel,
 import { isWrite, runTool } from "../cloud/src/tools";
 import { cloudDeploy, startCloudBridge } from "./cloud";
 import { adoptCloudUrl, readHubToml } from "./sync";
-import { judgeAccuracy, level, needsApproval, noteStuckRoutine, proposeBatch, resolveProposals, retireUnrunnableCopy, routineParkedOnDecision, routineQueued, routinesAwaitingApproval, supersedeProposed } from "./autonomy";
+import { judgeAccuracy, level, needsApproval, noteStuckRoutine, proposeBatch, resolveProposals, retireUnrunnableCopy, retireUnrunnableProposed, routineParkedOnDecision, routineQueued, routinesAwaitingApproval, supersedeProposed } from "./autonomy";
 import { CODE, L, UPDATE_REQUEST, type UpdateState, setUpdateState, updateState, allowedClis, cliHintPatch, fleetClis, capOk, idTagFor, isPrimary, isCloudDeployHost, knownHostCaps, runningRev, setApprovalGate, setIdTag } from "./core";
 import { accountEnv, accountsStatus, classify, failoverAccount, pendingLoginIds, pickAccount, reportFailure, retryLogins, submitLoginCode } from "./accounts";
 import { channelPrompt, channels, resolveChannels, updateChannel } from "./channels";
@@ -138,6 +138,9 @@ function runRoutines(cfg: Cfg, host: string, primary: boolean) {
     // A routine no machine can run must not manufacture copies: say it once, then stay quiet until the fleet changes.
     const fit = unrunnableReason([r.requires ?? "", pin ? `host:${pin}` : ""].join(",").split(",").map((s) => s.trim()).filter(Boolean), [hostCaps(cfg), ...knownHostCaps()]);
     if (fit) {
+      // copies queued for approval before #288 stay in tasks/proposed for good unless they are retired here
+      const dead = retireUnrunnableProposed(r.name, (reqs) => unrunnableReason(reqs, [hostCaps(cfg), ...knownHostCaps()]));
+      if (dead.length) journal(host, `⏰ routine \`${r.name}\`: retired ${dead.map((d) => d.id).join(", ")} from proposed, no known host has ${dead[0].why}`);
       state[r.name] = new Date().toISOString();
       const key = `${r.name}#unrunnable`;
       if (state[key] !== fit) {

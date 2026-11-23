@@ -222,6 +222,24 @@ test("a queued copy no known host can run is retired, so the routine runs on its
   expect(A.routineQueued("own-prs-ci")).toBe("T-0122");
 });
 
+test("a proposed copy no known host can run is retired too, so routines_starved stops reporting it", () => {
+  // pr-review requires os:linux in a macOS-only fleet: #288 stops minting new copies, so the copy that was already
+  // waiting for approval (T-2264, 2026-11-20) is never superseded and would sit in tasks/proposed for good
+  const missing = (reqs: string[]) => reqs.find((r) => r === "os:linux") ?? "";
+  const cfgA = { autonomy: { level: "onboarding" }, routine: [{ name: "pr-review", requires: "os:linux" }] } as any;
+  writeDoc(P("tasks", "proposed", "T-0301.md"), { id: "T-0301", title: "t", agent: "reviewer", source: "routine:pr-review", created: ago(60), requires: "os:linux" }, "body");
+  expect(A.routinesAwaitingApproval(cfgA).map((r) => r.name)).toEqual(["pr-review"]);
+  expect(A.retireUnrunnableProposed("pr-review", missing)).toEqual([{ id: "T-0301", why: "os:linux" }]);
+  expect(files("tasks", "proposed")).toEqual([]);
+  expect(readDoc(P("tasks", "rejected", "T-0301.md")).meta.approval).toBe("superseded:unrunnable");
+  expect(A.routinesAwaitingApproval(cfgA)).toEqual([]);
+  // a runnable copy still waits for the owner, and another routine's copies are left alone
+  writeDoc(P("tasks", "proposed", "T-0302.md"), { id: "T-0302", title: "t", agent: "reporter", source: "routine:pr-review", created: ago(60) }, "body");
+  writeDoc(P("tasks", "proposed", "T-0303.md"), { id: "T-0303", title: "t", agent: "reviewer", source: "routine:other", created: ago(60), requires: "os:linux" }, "body");
+  expect(A.retireUnrunnableProposed("pr-review", missing)).toEqual([]);
+  expect(files("tasks", "proposed")).toEqual(["T-0302.md", "T-0303.md"]);
+});
+
 test("a copy parked on an unanswered decision is found only while that decision is open", () => {
   writeDoc(P("decisions", "open", "D-0004.md"), { id: "D-0004", question: "告警源？" }, "x");
   writeDoc(P("tasks", "waiting", "T-0201.md"), {
