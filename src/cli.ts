@@ -1125,8 +1125,24 @@ async function status(cfg: Cfg, brief = false) {
   console.log("\nopen decisions");
   for (const p of list(P("decisions", "open"))) {
     const m = readDoc(p).meta;
-    console.log(`  ${m.id} (${m.task}, ${m.agent}) ${m.question}  rec=${m.recommendation}${m.held ? "  [waiting on you]" : ""}`);
+    const age = cardAge(m);
+    // A proposals batch has no task/agent/recommendation: "(undefined, undefined) … rec=undefined" told the owner
+    // nothing and hid the one word that clears it. Name the item count and the command instead.
+    if (m.kind === "proposals") {
+      const n = (m.items ?? "").split(",").filter(Boolean).length;
+      console.log(`  ${m.id} proposals: ${n} item${n === 1 ? "" : "s"}${age}  ${m.question}  → noop decide ${m.id} "<1,3|all|none>"`);
+      continue;
+    }
+    console.log(`  ${m.id} (${m.task}, ${m.agent}) ${m.question}  rec=${m.recommendation}${m.held ? `  [waiting on you${age}]` : age}`);
   }
+}
+
+/** How long a card has waited, as status() shows it: "" under a day, " · 12d" after. Unparseable dates count as fresh. */
+export function cardAge(meta: Record<string, string>, nowMs = Date.now()): string {
+  const d = Date.parse(meta.created ?? meta.notified ?? "");
+  if (Number.isNaN(d)) return "";
+  const days = Math.floor((nowMs - d) / 86_400_000);
+  return days >= 1 ? ` · ${days}d` : "";
 }
 
 const HELP = `Noop — your own AI team
