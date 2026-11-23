@@ -2253,6 +2253,10 @@ describe("commands", () => {
     await app.press("id:secret-delete");
     await app.waitUntil(() => sent.length === 2);
     expect(sent[1]).toEqual({ name: "GITHUB_TOKEN", value: null });
+    // Claude credentials live in their own tab, not under MCP
+    expect(app.count("id:claude-key-set-ANTHROPIC_API_KEY")).toBe(0);
+    await app.press("id:settings-tab-claude");
+    expect(app.count("id:secret-row-GITHUB_TOKEN")).toBe(0);
     // an unset Claude credential: its Set button opens the editor under the variable's name, with nothing to delete yet
     await app.press("id:claude-key-set-ANTHROPIC_API_KEY");
     await app.waitFor("id:secret-editor");

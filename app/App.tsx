@@ -3193,6 +3193,7 @@ const SETTINGS_TABS = () => [
   ["parallel", L("Parallelism", "并行"), "layers"],
   ["commands", L("Commands", "常用指令"), "terminal"],
   ["mcp", "MCP", "components"],
+  ["claude", "Claude", "lock"],
   ["storage", L("Storage", "存储"), "photos"],
   ["version", L("Version", "版本"), "github"],
   ["rules", L("Rules & memory", "规则与记忆"), "scroll"],
@@ -3354,9 +3355,13 @@ function TeamSettings(props: { hub: Hub; push: Push; settings: Settings; wide: b
         <Group title={L("MCP servers", "MCP 服务")} hint={MCP_HINT()}>
           <McpRows settings={props.settings} />
         </Group>
+        </If>
+        <If when={on("claude")}>
         <Group title="Claude" hint={CLAUDE_HINT()}>
-          <ClaudeKeyRows settings={props.settings} />
+          <ClaudeKeyRows settings={props.settings} editor />
         </Group>
+        </If>
+        <If when={on("mcp")}>
         <Group title={L("Keys", "密钥")} hint={SECRETS_HINT()}>
           <SecretRows settings={props.settings} />
         </Group>
@@ -3613,13 +3618,15 @@ function SetSecretMark() {
 }
 
 /** The Claude credentials: fixed rows that open the shared-key editor on their own name. */
-function ClaudeKeyRows(props: { settings: Settings }) {
+/** `editor`: render the key editor here too, for a page that has no Keys list (the wide Claude tab). */
+function ClaudeKeyRows(props: { settings: Settings; editor?: boolean }) {
   const st = props.settings;
   const d = st.secretDraft;
   void st.loadSecrets();
   const set = (name: string) => (st.secrets() ?? []).find((k) => k.name === name);
   const open = (name: string) => { d.name.set(name); d.value.set(""); d.note.set(""); d.editing.set(name); };
   return (
+    <>
     <Each of={CLAUDE_KEYS} key={(k) => k.name}>
       {(k, i) => (
         <SettingsItem first={i() === 0} testID={`claude-key-${k().name}`} onPress={() => open(k().name)} style={{ flexDirection: "row", alignItems: "center" }}>
@@ -3636,6 +3643,10 @@ function ClaudeKeyRows(props: { settings: Settings }) {
         </SettingsItem>
       )}
     </Each>
+    <If when={props.editor}>
+      <SecretEditor settings={st} />
+    </If>
+    </>
   );
 }
 
