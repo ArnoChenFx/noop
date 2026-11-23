@@ -101,5 +101,6 @@ test("metrics say which code produced them, and when that code is behind or dirt
   expect(s.dirty_files).toBe(1);
   expect(M.codeState(join(dir, "nope"))).toBeNull(); // no git checkout → null, not a false "clean"
   rmSync(dir, { recursive: true, force: true });
-}, 30_000); // ~13 synchronous git spawns: 3 read the real checkout, 10 build the throwaway repo. Each runs 0.2–1 s on a
-// busy Mac (load 60+ here), so the 5 s default failed on load rather than on a regression — that blocked a daemon update.
+}, 120_000); // ~13 synchronous git spawns: 3 read the real checkout, 10 build the throwaway repo. Each runs 0.2-1 s on a
+// busy Mac (load 60+ here) but 63.9 s in total at load 200-370, so the 30 s guard failed on load rather than on a
+// regression — that blocked a daemon update.
