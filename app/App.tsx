@@ -2532,8 +2532,8 @@ function UserMenu(props: { hub: Hub; onSettings: () => void; reads: MessageReads
           open={open()}
           onOpenChange={({ open: o }) => open.set(o)}
           presentation="pageSheet"
-          sheetHeight={height()}
-          sheetGrabber
+          detents={[{ height: height() }]}
+          grabber
           accessibilityLabel={menuLabel()}
         >
           <View onLayout={({ bounds }) => height.set(Math.ceil(bounds.size.height))} style={{ gap: 22, paddingTop: 28, paddingBottom: 4 }}>
