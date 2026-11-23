@@ -7,11 +7,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { type Cfg, L, hostName, journal, HOME_DIR } from "./core";
 import { notify } from "./notify";
+import { cachedSecrets } from "./secrets";
 
 const HOME = join(HOME_DIR, "accounts");
 const STATE = join(HOME, "state.json");
 
-export type Account = { cli: string; name: string; dir: string; default?: boolean };
+export type Account = { cli: string; name: string; dir: string; default?: boolean; auth?: "oauth" | "api" };
 type AState = { cooldown_until?: string; needs_login?: boolean; last_error?: string; login_id?: string; token?: string; cred?: number; told?: string };
 type State = { accounts: Record<string, AState>; seq: number; alerted?: Record<string, string> };
 
@@ -23,7 +24,41 @@ const key = (a: Account) => `${a.cli}-${a.name}`;
 export function accounts(cfg: Cfg, cli: string): Account[] {
   const list: Account[] = (cfg.accounts ?? []).filter((a: Account) => a.cli === cli)
     .map((a: Account) => ({ ...a, dir: (a.dir ?? join(HOME, `${a.cli}-${a.name}`)).replace(/^~/, homedir()) }));
-  return list.length ? list : [{ cli, name: "default", dir: "", default: true }];
+  if (list.length) return list;
+  const primary: Account = { cli, name: "default", dir: "", default: true };
+  // An explicitly parked key is a fallback, never the subscription's replacement.
+  const api = cli === "claude" ? claudeApiEnv() : {};
+  if (api.ANTHROPIC_API_KEY || api.ANTHROPIC_AUTH_TOKEN) return [
+    { ...primary, auth: "oauth" }, { ...primary, name: "api", auth: "api" },
+  ];
+  return [primary];
+}
+
+/** Claude API credentials, in order: the team's shared keys set once in Noop's Settings → Keys (every machine), then
+ *  this machine's ~/.claude/settings.json, where underscore-prefixed entries are the owner's parked fallback.
+ *  A shared key always comes with its own base URL (or none): a machine's gateway URL never pairs with a shared key. */
+export const CLAUDE_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_OAUTH_TOKEN"] as const;
+export function claudeApiEnv(dir = join(homedir(), ".claude"), shared: Record<string, string> = cachedSecrets()): Record<string, string> {
+  if (shared.ANTHROPIC_API_KEY) return Object.fromEntries([["ANTHROPIC_API_KEY", shared.ANTHROPIC_API_KEY], ...(shared.ANTHROPIC_BASE_URL ? [["ANTHROPIC_BASE_URL", shared.ANTHROPIC_BASE_URL]] : [])]);
+  try {
+    const env = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8"))?.env ?? {};
+    return Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
+      .map((key) => [key, env[key] || env[`_${key}`]])
+      .filter(([, value]) => typeof value === "string" && value.length));
+  } catch { return {}; }
+}
+
+/** The subscription login: a `claude setup-token` token shared in Settings → Keys (one login, every machine),
+ *  else the one this machine's assisted login saved. */
+export function claudeOAuthToken(a: Account, shared: Record<string, string> = cachedSecrets()): string | undefined {
+  return shared.CLAUDE_CODE_OAUTH_TOKEN || load().accounts[key(a)]?.token;
+}
+
+/** Override user-level API auth without rewriting settings or putting secrets in argv. */
+export function claudeAuthArgs(env: Record<string, string | undefined>): string[] {
+  return env.NOOP_CLAUDE_AUTH === "oauth" ? ["--settings", JSON.stringify({ apiKeyHelper: "", env: {
+    ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "", ANTHROPIC_BASE_URL: "",
+  } })] : [];
 }
 
 /** Claude Code can authenticate through an API gateway instead of an Anthropic OAuth login: the `env` block of
@@ -60,6 +95,7 @@ export function codexGatewayAuth(dir: string): string | null {
 }
 
 function usesGateway(a: Account): boolean {
+  if (a.auth) return a.auth === "api";
   const dir = a.default ? join(homedir(), a.cli === "claude" ? ".claude" : ".codex") : a.dir;
   if (a.cli === "claude") return !!gatewayAuth(dir);
   if (a.cli === "codex") return !!codexGatewayAuth(dir);
@@ -112,12 +148,17 @@ export function failoverAccount(cfg: Cfg, failed: Account | null, wanted: string
 
 export function accountEnv(a: Account): Record<string, string> {
   const env: Record<string, string> = {};
+  if (a.auth === "oauth") Object.assign(env, { NOOP_CLAUDE_AUTH: "oauth", ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "", ANTHROPIC_BASE_URL: "" });
+  if (a.auth === "api") Object.assign(env, claudeApiEnv(a.default ? undefined : a.dir), { NOOP_CLAUDE_AUTH: "api", CLAUDE_CODE_OAUTH_TOKEN: "" });
+  // setup-token is saved in Noop's account state, including the default account.
+  if (a.cli === "claude" && a.auth !== "api") {
+    const tok = claudeOAuthToken(a);
+    if (tok) env.CLAUDE_CODE_OAUTH_TOKEN = tok;
+  }
   if (a.default) return env;
   mkdirSync(a.dir, { recursive: true });
   if (a.cli === "claude") {
     env.CLAUDE_CONFIG_DIR = a.dir;
-    const tok = load().accounts[key(a)]?.token;
-    if (tok) env.CLAUDE_CODE_OAUTH_TOKEN = tok;
   }
   if (a.cli === "codex") env.CODEX_HOME = a.dir;
   return env;
@@ -172,7 +213,8 @@ export async function reportFailure(a: Account, kind: Failure, output: string, c
     journal(host, `${key(a)} hit usage limit → cooldown until ${st.cooldown_until.slice(11, 16)}Z`);
     if (st.told !== st.cooldown_until) {
       st.told = st.cooldown_until;
-      const others = (cfg.clis?.preference ?? ["claude", "codex"]).filter((c: string) => c !== a.cli && Bun.which(c) && accounts(cfg, c).some(usable));
+      const same = accounts(cfg, a.cli).filter((other) => key(other) !== key(a) && usable(other)).map((other) => `${other.cli}/${other.name}`);
+      const others = [...same, ...(cfg.clis?.preference ?? ["claude", "codex"]).filter((c: string) => c !== a.cli && Bun.which(c) && accounts(cfg, c).some(usable))];
       const at = new Date(st.cooldown_until).toLocaleTimeString(L("en-US", "zh-CN"), { hour: "2-digit", minute: "2-digit" });
       void notify([L(`${a.cli === "claude" ? "Claude" : "Codex"} (${host}) is out of quota, back around ${at}.`, `${a.cli === "claude" ? "Claude" : "Codex"}（${host}）额度用完了，约 ${at} 恢复。`),
         others.length ? L(`Until then tasks go to ${others.join(", ")}.`, `这期间任务先交给 ${others.join("、")} 做。`) : L("No AI is available until then, tasks will queue.", "这期间没有可用的 AI，任务会排队等着。"),
@@ -246,7 +288,7 @@ export async function startLogin(a: Account, cfg: Cfg) {
   s.accounts[k] = { ...(s.accounts[k] ?? {}), login_id: id };
   save(s);
   const { cmd, needsCode } = loginCommand(a);
-  const proc = Bun.spawn(withPty(cmd), {
+  const proc = Bun.spawn(withPty([...cmd, ...claudeAuthArgs(accountEnv(a))]), {
     stdin: "pipe", stdout: "pipe", stderr: "pipe",
     env: { ...process.env, ...accountEnv(a), BROWSER: "/bin/false", TERM: "xterm-256color", COLUMNS: "500" },
   });
